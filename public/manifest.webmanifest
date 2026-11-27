@@ -1,0 +1,32 @@
+{
+  "name": "Halal Crypto Intelligence — منصة الاستخبارات الشرعية للكريبتو",
+  "short_name": "HalalCrypto",
+  "description": "Institutional Shariah-compliant cryptocurrency screening, verified Binance Spot market analytics, technical indicators & research terminal.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#060a13",
+  "theme_color": "#060a13",
+  "dir": "rtl",
+  "lang": "ar",
+  "categories": ["finance", "business"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

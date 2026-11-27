@@ -1,0 +1,34 @@
+appId: com.halalcryptointelligence.desktop
+productName: Halal Crypto Intelligence
+copyright: Copyright © 2026 Halal Crypto Intelligence
+directories:
+  output: dist
+files:
+  - desktop/main.cjs
+  - desktop/preload.cjs
+  - desktop/icon.ico
+  - desktop/icon.png
+  - package.json
+extraResources:
+  - from: .next/standalone
+    to: standalone
+    filter:
+      - "**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: desktop/icon.ico
+  artifactName: Halal-Crypto-Intelligence-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Halal Crypto Intelligence
+publish:
+  provider: github
+  owner: aliazizdbab
+  repo: halal-crypto-intelligence
+  releaseType: release

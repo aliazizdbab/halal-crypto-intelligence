@@ -1,0 +1,15 @@
+services:
+  halal-crypto:
+    build: .
+    container_name: halal-crypto-intelligence
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/halal-crypto.sqlite
+    volumes:
+      - halal_crypto_data:/app/data
+
+volumes:
+  halal_crypto_data:

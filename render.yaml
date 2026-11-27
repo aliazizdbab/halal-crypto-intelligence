@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: halal-crypto-intelligence
+    runtime: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /api/version
+    disk:
+      name: sqlite-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /app/data/halal-crypto.sqlite
+      - key: GITHUB_OWNER
+        value: aliazizdbab
+      - key: GITHUB_REPO
+        value: halal-crypto-intelligence

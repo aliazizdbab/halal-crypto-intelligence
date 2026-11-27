@@ -1,0 +1,158 @@
+name: Release — Windows (.exe), Android (.apk) & Web
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify TypeScript, Tests & Web Build
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - id: meta
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  build-windows:
+    name: Build Windows Installer (.exe + Auto-Update)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Sync package version with tag
+        shell: pwsh
+        run: |
+          npm version "${{ needs.verify.outputs.version }}" --no-git-tag-version --allow-same-version
+      - name: Generate icons & build Next.js standalone
+        run: |
+          npm run icons:generate
+          npm run build
+      - name: Build & Publish Windows Installer via electron-builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish always
+
+  build-android:
+    name: Build Android APK (.apk)
+    needs: [verify, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Sync version into mobile launcher
+        run: |
+          VER="${{ needs.verify.outputs.version }}"
+          sed -i "s/const CURRENT_VERSION = \".*\";/const CURRENT_VERSION = \"${VER}\";/" mobile/index.html
+      - name: Initialize & sync Capacitor Android project
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+      - name: Configure Android permissions & release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          VER="${{ needs.verify.outputs.version }}"
+          # Ensure internet & cleartext traffic enabled in AndroidManifest.xml
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          grep -q 'usesCleartextTraffic' "$MANIFEST" || sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+
+          # Create or decode signing keystore so APK is properly signed and installable
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
+            PASS="${KEYSTORE_PASS:-halalcrypto2026}"
+            ALIAS="${KEY_ALIAS:-hci-release}"
+            KPASS="${KEY_PASS:-$PASS}"
+          else
+            PASS="halalcrypto2026"
+            ALIAS="hci-release"
+            KPASS="halalcrypto2026"
+            keytool -genkey -v -keystore android/app/release.keystore -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$KPASS" \
+              -dname "CN=Halal Crypto Intelligence, OU=Release, O=HalalCrypto, L=Global, ST=Global, C=US"
+          fi
+
+          # Append signing config cleanly to android/app/build.gradle
+          cat >> android/app/build.gradle <<EOF
+
+          android {
+              defaultConfig {
+                  versionName "${VER}"
+              }
+              signingConfigs {
+                  release {
+                      storeFile file("release.keystore")
+                      storePassword "${PASS}"
+                      keyAlias "${ALIAS}"
+                      keyPassword "${KPASS}"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                  }
+              }
+          }
+          EOF
+      - name: Compile Signed Release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+      - name: Upload Android APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.verify.outputs.tag }}"
+          VER="${{ needs.verify.outputs.version }}"
+          APK_OUT="Halal-Crypto-Intelligence-v${VER}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK_OUT"
+          gh release upload "$TAG" "$APK_OUT" --clobber

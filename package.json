@@ -1,0 +1,52 @@
+{
+  "name": "halal-crypto-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "description": "Institutional-grade Shariah-compliant cryptocurrency screening, Binance Spot market analytics, tokenomics, technical analysis & research platform.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aliazizdbab/halal-crypto-intelligence.git"
+  },
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "icons:generate": "node scripts/generate-icons.mjs",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:pack": "npm run build && electron-builder --win --dir",
+    "desktop:build": "npm run build && electron-builder --win",
+    "android:sync": "npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.1.0",
+    "@capacitor/core": "^7.1.0",
+    "electron-updater": "^6.3.9",
+    "exceljs": "^4.4.0",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
+    "lightweight-charts": "^4.2.3",
+    "lucide-react": "^0.475.0",
+    "next": "^15.3.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.1.0",
+    "@tailwindcss/postcss": "^4.0.9",
+    "@types/node": "^22.13.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "^36.2.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.0.9",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}

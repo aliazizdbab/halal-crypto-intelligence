@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+dist/
+android/
+/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+.DS_Store
+Thumbs.db
