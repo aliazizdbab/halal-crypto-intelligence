@@ -155,4 +155,5 @@ jobs:
           VER="${{ needs.verify.outputs.version }}"
           APK_OUT="Halal-Crypto-Intelligence-v${VER}.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "$APK_OUT"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Halal Crypto Intelligence ${TAG}" --generate-notes
           gh release upload "$TAG" "$APK_OUT" --clobber

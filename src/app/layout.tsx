@@ -1,26 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Cairo, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { UpdateBanner } from "@/components/UpdateBanner";
-
-const cairo = Cairo({
-  subsets: ["arabic", "latin"],
-  variable: "--font-cairo",
-  weight: ["400", "500", "600", "700", "800"],
-});
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  weight: ["400", "500", "600", "700"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["400", "500", "600"],
-});
 
 export const metadata: Metadata = {
   title: "Halal Crypto Intelligence | منصة الاستخبارات الشرعية والاستثمارية للعملات الرقمية",
@@ -43,12 +24,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="ar"
-      dir="rtl"
-      className={`${cairo.variable} ${inter.variable} ${jetbrainsMono.variable} dark`}
-    >
-      <body className="min-h-screen bg-[#060a13] text-slate-100 antialiased" style={{ fontFamily: "var(--font-cairo), var(--font-inter), sans-serif" }}>
+    <html lang="ar" dir="rtl" className="dark">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body
+        className="min-h-screen bg-[#060a13] text-slate-100 antialiased"
+        style={{ fontFamily: "'Cairo', 'Inter', 'Segoe UI', Tahoma, sans-serif" }}
+      >
         <LanguageProvider>
           <UpdateBanner />
           {children}
