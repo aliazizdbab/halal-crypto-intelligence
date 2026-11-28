@@ -11,15 +11,23 @@ import {
   ExternalLink,
   Filter,
   Info,
+  Loader2,
+  PlugZap,
   Scale,
   Search,
   ShieldCheck,
+  Sparkles,
   Star,
   TrendingDown,
   TrendingUp,
   Unlock,
 } from "lucide-react";
-import type { AssetDirectoryRow, DashboardSummary, RiskLevel, ShariahClassification } from "@/types/domain";
+import type {
+  AssetDirectoryRow,
+  DashboardSummary,
+  ExchangeFilter,
+  RiskLevel,
+} from "@/types/domain";
 import type { DirectorySortOption } from "@/lib/services/repository";
 import {
   formatCompactUsd,
@@ -32,6 +40,7 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import { TopNav } from "@/components/TopNav";
 import { AiResearchDrawer } from "@/components/AiResearchDrawer";
+import { AiAgentSettingsModal } from "@/components/AiAgentSettingsModal";
 import { AlertsDrawer } from "@/components/AlertsDrawer";
 import { ShariahRegistryModal } from "@/components/ShariahRegistryModal";
 import { CompareModal } from "@/components/CompareModal";
@@ -65,6 +74,7 @@ export default function DashboardPage() {
 
   // Filters & Sorting (Default: Halal + Conditional Halal, Sorted Lowest -> Highest Unit Price)
   const [preset, setPreset] = useState<FilterPreset>("HALAL_DEFAULT");
+  const [exchangeFilter, setExchangeFilter] = useState<ExchangeFilter>("ALL");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sort, setSort] = useState<DirectorySortOption>("price_asc");
@@ -75,18 +85,23 @@ export default function DashboardPage() {
   const [page, setPage] = useState(1);
   const pageSize = 35;
 
-  // Interactive features
+  // Interactive features & AI row analysis state
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [showAiDrawer, setShowAiDrawer] = useState(false);
+  const [showAiSettingsModal, setShowAiSettingsModal] = useState(false);
   const [aiDefaultSymbol, setAiDefaultSymbol] = useState<string | undefined>(undefined);
   const [showAlertsDrawer, setShowAlertsDrawer] = useState(false);
   const [showShariahModal, setShowShariahModal] = useState(false);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
 
+  const [analyzingSymbols, setAnalyzingSymbols] = useState<Record<string, boolean>>({});
+  const [aiPromptBanner, setAiPromptBanner] = useState<{ symbol: string; message: string } | null>(null);
+
   // Customizable table columns
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [visibleCols, setVisibleCols] = useState({
+    exchanges: true,
     change24h: true,
     marketCap: true,
     volume24h: true,
@@ -96,7 +111,7 @@ export default function DashboardPage() {
     potential: true,
     tokenomicsRisk: true,
     overallRisk: true,
-    binancePair: true,
+    spotLinks: true,
   });
 
   // Live Binance WebSocket patches
@@ -150,6 +165,7 @@ export default function DashboardPage() {
     try {
       const qs = new URLSearchParams({
         classifications: classificationsParam,
+        exchange: exchangeFilter,
         sort,
         page: String(page),
         pageSize: String(pageSize),
@@ -170,7 +186,17 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [classificationsParam, sort, page, debouncedSearch, riskFilter, minCredibility, minPotential, watchlistOnly]);
+  }, [
+    classificationsParam,
+    exchangeFilter,
+    sort,
+    page,
+    debouncedSearch,
+    riskFilter,
+    minCredibility,
+    minPotential,
+    watchlistOnly,
+  ]);
 
   useEffect(() => {
     loadDashboardSummary().then(() => loadDirectory());
@@ -180,6 +206,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (rows.length === 0) return;
     const streams = rows
+      .filter((r) => !r.exchanges || r.exchanges.includes("BINANCE"))
       .slice(0, 40)
       .map((r) => `${r.symbol.toLowerCase()}@ticker`)
       .join("/");
@@ -206,7 +233,8 @@ export default function DashboardPage() {
 
           setLivePatches((prev) => {
             const oldPrice = prev[sym]?.price;
-            const dir = oldPrice === undefined ? "flat" : price > oldPrice ? "up" : price < oldPrice ? "down" : "flat";
+            const dir =
+              oldPrice === undefined ? "flat" : price > oldPrice ? "up" : price < oldPrice ? "down" : "flat";
             return {
               ...prev,
               [sym]: { price, changePct, quoteVol, dir },
@@ -227,7 +255,7 @@ export default function DashboardPage() {
     };
   }, [rows]);
 
-  async function handleSyncBinance() {
+  async function handleSyncExchanges() {
     setIsSyncing(true);
     setSyncMessage(null);
     try {
@@ -238,10 +266,12 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (data.ok) {
+        const binCount = data.binance?.totalEligibleSpotUsdt ?? 0;
+        const bybCount = data.bybit?.totalEligibleSpotUsdt ?? 0;
         setSyncMessage(
           lang === "ar"
-            ? `تم التحقق من ${data.binance.totalEligibleSpotUsdt} زوج Binance Spot نشط، وتحديث ${data.marketCap?.updatedAssets ?? 0} قيمة سوقية.`
-            : `Verified ${data.binance.totalEligibleSpotUsdt} active Binance Spot USDT pairs & enriched ${data.marketCap?.updatedAssets ?? 0} market caps.`
+            ? `تمت المزامنة بنجاح: ${binCount} زوج Binance Spot + ${bybCount} زوج Bybit Spot، وتحديث ${data.marketCap?.updatedAssets ?? 0} قيمة سوقية.`
+            : `Synced ${binCount} Binance Spot + ${bybCount} Bybit Spot USDT pairs & enriched ${data.marketCap?.updatedAssets ?? 0} market caps.`
         );
         await loadDashboardSummary();
         await loadDirectory();
@@ -249,9 +279,56 @@ export default function DashboardPage() {
         setSyncMessage(data.error || "Sync failed");
       }
     } catch {
-      setSyncMessage(lang === "ar" ? "فشلت المزامنة مع Binance API" : "Failed to reach Binance Spot API");
+      setSyncMessage(
+        lang === "ar" ? "فشلت المزامنة مع واجهات Binance / Bybit" : "Failed to reach Spot exchange APIs"
+      );
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function handleAnalyzeSingleRow(symbol: string, allowHeuristicFallback = false) {
+    setAnalyzingSymbols((prev) => ({ ...prev, [symbol]: true }));
+    setAiPromptBanner(null);
+    try {
+      const res = await fetch("/api/ai/analyze-asset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol,
+          lang,
+          allowHeuristicFallback,
+          overwriteVerified: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && data.detail?.overview) {
+        const updatedRow: AssetDirectoryRow = data.detail.overview;
+        setRows((prev) =>
+          prev.map((r) => (r.symbol === symbol ? { ...updatedRow, rank: r.rank } : r))
+        );
+        setSyncMessage(
+          lang === "ar"
+            ? `تم تحليل وإضافة ${symbol.replace("USDT", "")} بنجاح عبر (${data.providerUsed}) -> التصنيف الأولي: ${data.classification}`
+            : `Analyzed & saved ${symbol} via ${data.providerUsed} -> ${data.classification}`
+        );
+        loadDashboardSummary();
+      } else if (data.code === "AI_NOT_CONFIGURED") {
+        setAiPromptBanner({
+          symbol,
+          message:
+            data.error ||
+            (lang === "ar"
+              ? "لم يتم ربط وكيل AI خارجي بعد. اربط وكيلك الآن أو استخدم الفحص الكمي المدمج."
+              : "No external AI Agent connected yet."),
+        });
+      } else {
+        setSyncMessage(data.error || "AI analysis failed");
+      }
+    } catch {
+      setSyncMessage(lang === "ar" ? "حدث خطأ أثناء تحليل العملة بالـ AI" : "Network error running AI analysis");
+    } finally {
+      setAnalyzingSymbols((prev) => ({ ...prev, [symbol]: false }));
     }
   }
 
@@ -307,23 +384,37 @@ export default function DashboardPage() {
     { key: "CONDITIONAL", labelAr: "مباح بشروط", labelEn: "Conditional", count: summary?.countHalalWithConditions },
     { key: "DISPUTED", labelAr: "مختلف فيه", labelEn: "Disputed", count: summary?.countScholarlyDisagreement },
     { key: "NON_COMPLIANT", labelAr: "مستبعد / غير مباح", labelEn: "Excluded", count: summary?.countNonCompliant },
-    { key: "UNVERIFIED", labelAr: "غير مفحوص (Binance)", labelEn: "Unverified", count: summary?.countUnverified },
-    { key: "ALL", labelAr: "كل Binance Spot USDT", labelEn: "All Spot USDT", count: summary?.totalBinanceSpotUsdtPairs },
+    { key: "UNVERIFIED", labelAr: "غير محلل (بانتظار الفحص)", labelEn: "Unanalyzed", count: summary?.countUnverified },
+    {
+      key: "ALL",
+      labelAr: "كل عملات Spot USDT",
+      labelEn: "All Spot USDT",
+      count: summary?.totalUnifiedSpotPairs ?? summary?.totalBinanceSpotUsdtPairs,
+    },
+  ];
+
+  const exchangePills: Array<{ key: ExchangeFilter; ar: string; en: string }> = [
+    { key: "ALL", ar: "كل المنصات", en: "All Venues" },
+    { key: "BINANCE", ar: "Binance", en: "Binance" },
+    { key: "BYBIT", ar: "Bybit", en: "Bybit" },
+    { key: "BYBIT_EXCLUSIVE", ar: "حصري لـ Bybit", en: "Bybit Exclusive" },
   ];
 
   return (
     <div className="min-h-screen bg-[#060a13] text-slate-100">
       <TopNav
         connectionStatus={summary?.binanceConnectionStatus}
-        lastSyncedAt={summary?.lastBinanceSyncAt}
+        bybitStatus={summary?.bybitConnectionStatus}
+        lastSyncedAt={summary?.lastBinanceSyncAt || summary?.lastBybitSyncAt}
         wsLiveCount={Object.keys(livePatches).length}
         unreadAlerts={unreadAlerts}
         isSyncing={isSyncing}
-        onSync={handleSyncBinance}
+        onSync={handleSyncExchanges}
         onOpenAi={() => {
           setAiDefaultSymbol(undefined);
           setShowAiDrawer(true);
         }}
+        onOpenAiSettings={() => setShowAiSettingsModal(true)}
         onOpenAlerts={() => setShowAlertsDrawer(true)}
         onOpenShariahModal={() => setShowShariahModal(true)}
         exportQuery={exportQuery}
@@ -339,19 +430,49 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {aiPromptBanner && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-purple-500/45 bg-purple-500/15 px-4 py-2.5 text-xs text-purple-100">
+            <span>{aiPromptBanner.message}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setAiPromptBanner(null);
+                  setShowAiSettingsModal(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1 font-semibold text-white hover:bg-purple-500"
+              >
+                <PlugZap className="h-3.5 w-3.5" />
+                {lang === "ar" ? "ربط وكيل AI الآن" : "Connect AI Agent"}
+              </button>
+              <button
+                onClick={() => handleAnalyzeSingleRow(aiPromptBanner.symbol, true)}
+                className="rounded-lg border border-purple-400/40 bg-slate-900/80 px-3 py-1 font-semibold text-purple-200 hover:bg-slate-800"
+              >
+                {lang === "ar" ? "فحص فوري بالمحلل المدمج (بدون مفتاح)" : "Run Built-in Analyzer Now"}
+              </button>
+              <button onClick={() => setAiPromptBanner(null)} className="px-1 text-purple-300 hover:text-white">
+                ×
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Executive KPI Grid */}
         <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
           <div className="rounded-xl border border-slate-800/90 bg-[#0b1120] p-3">
             <div className="text-[11px] text-slate-400">
-              {lang === "ar" ? "إجمالي العملات المفحوصة" : "Screened Assets"}
+              {lang === "ar" ? "إجمالي العملات المفحوصة / الكلي" : "Screened / Total Spot"}
             </div>
             <div className="mt-1 flex items-baseline justify-between">
               <span className="font-mono-num text-xl font-bold text-white">
                 {summary?.totalScreenedAssets ?? "—"}
               </span>
               <span className="font-mono-num text-[11px] text-slate-400">
-                / {summary?.totalBinanceSpotUsdtPairs ?? "—"} Spot
+                / {summary?.totalUnifiedSpotPairs ?? summary?.totalBinanceSpotUsdtPairs ?? "—"} Spot
               </span>
+            </div>
+            <div className="mt-0.5 font-mono-num text-[10px] text-slate-500">
+              Binance: {summary?.totalBinanceSpotUsdtPairs ?? "—"} • Bybit: {summary?.totalBybitSpotUsdtPairs ?? "—"}
             </div>
           </div>
 
@@ -363,10 +484,15 @@ export default function DashboardPage() {
               <span className="font-mono-num text-xl font-bold text-emerald-400">
                 {summary?.countHalal ?? "—"}
               </span>
-              <span className="text-[11px] text-amber-300 font-mono-num">
+              <span className="font-mono-num text-[11px] text-amber-300">
                 +{summary?.countHalalWithConditions ?? 0} {lang === "ar" ? "بشروط" : "Cond."}
               </span>
             </div>
+            {(summary?.countAiScreened ?? 0) > 0 && (
+              <div className="mt-0.5 text-[10px] text-purple-300">
+                {lang === "ar" ? `منها ${summary?.countAiScreened} بتحليل AI أولي` : `${summary?.countAiScreened} AI-screened`}
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl border border-slate-800/90 bg-[#0b1120] p-3">
@@ -397,7 +523,9 @@ export default function DashboardPage() {
             <div className="text-[11px] text-slate-400">
               {lang === "ar" ? "متوسط موثوقية المشاريع" : "Avg. Project Credibility"}
             </div>
-            <div className={`mt-1 font-mono-num text-xl font-bold ${scoreColorClass(summary?.averageCredibilityScore ?? null)}`}>
+            <div
+              className={`mt-1 font-mono-num text-xl font-bold ${scoreColorClass(summary?.averageCredibilityScore ?? null)}`}
+            >
               {summary?.averageCredibilityScore !== null && summary?.averageCredibilityScore !== undefined
                 ? `${summary.averageCredibilityScore}/100`
                 : "—"}
@@ -408,8 +536,11 @@ export default function DashboardPage() {
             <div className="text-[11px] text-slate-400">
               {lang === "ar" ? "متوسط فرص النمو" : "Avg. Investment Potential"}
             </div>
-            <div className={`mt-1 font-mono-num text-xl font-bold ${scoreColorClass(summary?.averageInvestmentPotentialScore ?? null)}`}>
-              {summary?.averageInvestmentPotentialScore !== null && summary?.averageInvestmentPotentialScore !== undefined
+            <div
+              className={`mt-1 font-mono-num text-xl font-bold ${scoreColorClass(summary?.averageInvestmentPotentialScore ?? null)}`}
+            >
+              {summary?.averageInvestmentPotentialScore !== null &&
+              summary?.averageInvestmentPotentialScore !== undefined
                 ? `${summary.averageInvestmentPotentialScore}/100`
                 : "—"}
             </div>
@@ -418,7 +549,6 @@ export default function DashboardPage() {
 
         {/* Analytical Intelligence Banner + Upcoming Unlocks + Shariah Guardrail */}
         <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-          {/* Valuation Realism Note (Unit Price != Cheap Valuation) */}
           <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-xs">
             <div className="mb-1 flex items-center gap-1.5 font-bold text-amber-300">
               <Info className="h-4 w-4 shrink-0" />
@@ -428,12 +558,11 @@ export default function DashboardPage() {
             </div>
             <p className="leading-relaxed text-slate-300">
               {lang === "ar"
-                ? "الترتيب الافتراضي أدناه يعرض العملات من أقل سعر للوحدة إلى الأعلى كما هو مطلوب، لكن المقارنة الاستثمارية الحقيقية تعتمد على القيمة السوقية (Market Cap) والتقييم المخفف بالكامل (FDV) ومعدل التضخم وفك القفل."
-                : "Default sorting is Lowest → Highest unit price as specified, but true valuation comparison requires Market Cap, FDV, inflation rate, and unlock schedules."}
+                ? "الترتيب الافتراضي يعرض العملات من أقل سعر للوحدة إلى الأعلى، لكن المقارنة الاستثمارية الحقيقية تعتمد على القيمة السوقية (Market Cap) وFDV ومعدل التضخم وجدران السيولة."
+                : "Default sorting is Lowest → Highest unit price, while true valuation requires comparing Market Cap, FDV, dilution, and order-book liquidity."}
             </p>
           </div>
 
-          {/* Upcoming Major Token Unlocks */}
           <div className="rounded-xl border border-slate-800 bg-[#0b1120] p-3 text-xs">
             <div className="mb-1.5 flex items-center justify-between font-bold text-slate-200">
               <span className="flex items-center gap-1.5">
@@ -460,60 +589,82 @@ export default function DashboardPage() {
                 </Link>
               ))}
               {(!summary || summary.upcomingMajorUnlocks.length === 0) && (
-                <p className="text-slate-500">{lang === "ar" ? "لا توجد فكوك قفل قريبة مسجلة" : "No upcoming cliff unlocks logged."}</p>
+                <p className="text-slate-500">
+                  {lang === "ar" ? "لا توجد فكوك قفل قريبة مسجلة" : "No upcoming cliff unlocks logged."}
+                </p>
               )}
             </div>
           </div>
 
-          {/* Shariah Methodology Disclaimer */}
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3 text-xs">
             <div className="mb-1 flex items-center gap-1.5 font-bold text-emerald-300">
               <ShieldCheck className="h-4 w-4 shrink-0" />
               {lang === "ar"
-                ? "الشفافية الشرعية وفصل التحليل"
-                : "Shariah Transparency & Risk Separation"}
+                ? "التمييز الصارم بين المراجع الشرعية وتحليل الـ AI"
+                : "Strict Separation: Official Authority vs AI Opinion"}
             </div>
             <p className="leading-relaxed text-slate-300">
               {lang === "ar"
-                ? "لا ندّعي الإجماع الفقهي لأي عملة رقمية؛ كل تصنيف مرتبط بجهة فحص محددة ومصدر موثّق. التداول الفوري (Spot) فقط، ولا تُعد درجات الموثوقية أو النمو ضماناً للربح."
-                : "No cryptocurrency is claimed unanimously Halal; every classification cites a named screening body. Spot-only analytics — scores are analytical ratings, never guaranteed profit claims."}
+                ? "اضغط زر «تحليل بالـ AI» بجانب أي عملة غير محللة لفحصها فوراً وإضافتها، وتُميّز تلقائياً بشارة «تحليل AI» لفصلها عن الفتاوى والمراجع البشرية الموثّقة."
+                : "Click 'Analyze w/ AI' next to any unverified coin for instant screening; AI results carry an explicit 'AI Opinion' badge distinct from verified authorities."}
             </p>
           </div>
         </section>
 
         {/* Main Directory Panel */}
         <section className="rounded-2xl border border-slate-800/90 bg-[#0b1120] shadow-xl">
-          {/* Shariah Classification Tabs */}
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800 px-3 py-2.5">
-            {presetTabs.map((t) => {
-              const active = preset === t.key;
-              return (
+          {/* Shariah Classification Tabs + Exchange Filter Pills */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {presetTabs.map((t) => {
+                const active = preset === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => {
+                      setPreset(t.key);
+                      setPage(1);
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                      active
+                        ? "border border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                        : "border border-transparent bg-slate-900/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                    }`}
+                  >
+                    <span>{lang === "ar" ? t.labelAr : t.labelEn}</span>
+                    {t.count !== undefined && (
+                      <span className="rounded bg-slate-950/80 px-1.5 py-0.2 font-mono-num text-[10px] text-slate-300">
+                        {t.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Exchange Filter Pills */}
+            <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/80 p-1 text-[11px]">
+              {exchangePills.map((ep) => (
                 <button
-                  key={t.key}
+                  key={ep.key}
                   onClick={() => {
-                    setPreset(t.key);
+                    setExchangeFilter(ep.key);
                     setPage(1);
                   }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                    active
-                      ? "border border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                      : "border border-transparent bg-slate-900/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                    exchangeFilter === ep.key
+                      ? "bg-amber-500/20 text-amber-200 border border-amber-500/40"
+                      : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  <span>{lang === "ar" ? t.labelAr : t.labelEn}</span>
-                  {t.count !== undefined && (
-                    <span className="rounded bg-slate-950/80 px-1.5 py-0.2 font-mono-num text-[10px] text-slate-300">
-                      {t.count}
-                    </span>
-                  )}
+                  {lang === "ar" ? ep.ar : ep.en}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
 
           {/* Search, Advanced Filters, Sorting & Column Controls */}
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-slate-950/40 px-3 py-2.5 text-xs">
-            {/* Search */}
             <div className="relative min-w-[200px] flex-1">
               <Search className="pointer-events-none absolute start-2.5 top-2 h-3.5 w-3.5 text-slate-500" />
               <input
@@ -521,8 +672,8 @@ export default function DashboardPage() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={
                   lang === "ar"
-                    ? "ابحث بالاسم أو الرمز أو الجهة الشرعية..."
-                    : "Search name, symbol, category, or authority..."
+                    ? "ابحث بالاسم أو الرمز (BTC, KAS, MNT) أو الجهة الشرعية..."
+                    : "Search name, symbol (BTC, KAS, MNT), category, or authority..."
                 }
                 className="w-full rounded-lg border border-slate-800 bg-slate-950 py-1.5 pe-3 ps-8 text-xs text-white placeholder-slate-500 focus:border-emerald-500/60 focus:outline-none"
               />
@@ -540,17 +691,37 @@ export default function DashboardPage() {
                 className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
               >
                 <option value="price_asc">
-                  {lang === "ar" ? "السعر: من الأقل إلى الأعلى (افتراضي)" : "Unit Price: Lowest → Highest (Default)"}
+                  {lang === "ar"
+                    ? "السعر: من الأقل إلى الأعلى (افتراضي)"
+                    : "Unit Price: Lowest → Highest (Default)"}
                 </option>
-                <option value="price_desc">{lang === "ar" ? "السعر: من الأعلى إلى الأقل" : "Unit Price: Highest → Lowest"}</option>
-                <option value="combined_desc">{lang === "ar" ? "أفضل تقييم بحثي مدمج" : "Best Combined Research Rating"}</option>
-                <option value="credibility_desc">{lang === "ar" ? "الأعلى موثوقية للمشروع" : "Highest Project Credibility"}</option>
-                <option value="potential_desc">{lang === "ar" ? "الأعلى فرص نمو" : "Highest Investment Potential"}</option>
-                <option value="market_cap_desc">{lang === "ar" ? "الأكبر قيمة سوقية" : "Highest Market Cap"}</option>
-                <option value="volume_desc">{lang === "ar" ? "الأعلى حجم تداول 24س" : "Highest 24h Volume"}</option>
-                <option value="liquidity_desc">{lang === "ar" ? "أفضل سيولة Spot" : "Best Spot Liquidity"}</option>
-                <option value="dilution_asc">{lang === "ar" ? "أقل مخاطر تخفيف (FDV/MCap)" : "Lowest Token Dilution Risk"}</option>
-                <option value="volatility_asc">{lang === "ar" ? "أقل تذبذب سعري" : "Lowest Volatility"}</option>
+                <option value="price_desc">
+                  {lang === "ar" ? "السعر: من الأعلى إلى الأقل" : "Unit Price: Highest → Lowest"}
+                </option>
+                <option value="combined_desc">
+                  {lang === "ar" ? "أفضل تقييم بحثي مدمج" : "Best Combined Research Rating"}
+                </option>
+                <option value="credibility_desc">
+                  {lang === "ar" ? "الأعلى موثوقية للمشروع" : "Highest Project Credibility"}
+                </option>
+                <option value="potential_desc">
+                  {lang === "ar" ? "الأعلى فرص نمو" : "Highest Investment Potential"}
+                </option>
+                <option value="market_cap_desc">
+                  {lang === "ar" ? "الأكبر قيمة سوقية" : "Highest Market Cap"}
+                </option>
+                <option value="volume_desc">
+                  {lang === "ar" ? "الأعلى حجم تداول 24س" : "Highest 24h Volume"}
+                </option>
+                <option value="liquidity_desc">
+                  {lang === "ar" ? "أفضل سيولة Spot" : "Best Spot Liquidity"}
+                </option>
+                <option value="dilution_asc">
+                  {lang === "ar" ? "أقل مخاطر تخفيف (FDV/MCap)" : "Lowest Token Dilution Risk"}
+                </option>
+                <option value="volatility_asc">
+                  {lang === "ar" ? "أقل تذبذب سعري" : "Lowest Volatility"}
+                </option>
               </select>
             </div>
 
@@ -573,7 +744,6 @@ export default function DashboardPage() {
               </select>
             </div>
 
-            {/* Score Thresholds */}
             <input
               type="number"
               min={0}
@@ -599,7 +769,6 @@ export default function DashboardPage() {
               className="w-24 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white placeholder-slate-500"
             />
 
-            {/* Watchlist Only */}
             <button
               onClick={() => {
                 setWatchlistOnly((v) => !v);
@@ -615,7 +784,6 @@ export default function DashboardPage() {
               {lang === "ar" ? "المفضلة" : "Watchlist"}
             </button>
 
-            {/* Compare Button */}
             {compareSymbols.length >= 2 && (
               <button
                 onClick={() => setShowCompareModal(true)}
@@ -659,6 +827,9 @@ export default function DashboardPage() {
                 <tr className="border-b border-slate-800 bg-slate-900/80 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   <th className="w-8 px-2.5 py-2.5 text-center">#</th>
                   <th className="px-2.5 py-2.5 text-start">{lang === "ar" ? "العملة والرمز" : "Asset"}</th>
+                  {visibleCols.exchanges && (
+                    <th className="px-2.5 py-2.5 text-center">{lang === "ar" ? "المنصة" : "Exchanges"}</th>
+                  )}
                   <th className="px-2.5 py-2.5 text-end">{lang === "ar" ? "السعر (USDT)" : "Price USDT"}</th>
                   {visibleCols.change24h && (
                     <th className="px-2.5 py-2.5 text-end">{lang === "ar" ? "24 ساعة" : "24h %"}</th>
@@ -670,7 +841,9 @@ export default function DashboardPage() {
                     <th className="px-2.5 py-2.5 text-end">{lang === "ar" ? "حجم التداول 24س" : "24h Volume"}</th>
                   )}
                   {visibleCols.shariah && (
-                    <th className="px-2.5 py-2.5 text-start">{lang === "ar" ? "التصنيف الشرعي" : "Shariah Status"}</th>
+                    <th className="px-2.5 py-2.5 text-start">
+                      {lang === "ar" ? "التصنيف الشرعي / تحليل AI" : "Shariah / AI Scan"}
+                    </th>
                   )}
                   {visibleCols.authority && (
                     <th className="px-2.5 py-2.5 text-start">{lang === "ar" ? "الجهة المرجعية" : "Authority"}</th>
@@ -687,21 +860,23 @@ export default function DashboardPage() {
                   {visibleCols.overallRisk && (
                     <th className="px-2.5 py-2.5 text-center">{lang === "ar" ? "المخاطر" : "Risk"}</th>
                   )}
-                  {visibleCols.binancePair && (
-                    <th className="px-2.5 py-2.5 text-center">{lang === "ar" ? "Binance Spot" : "Spot Pair"}</th>
+                  {visibleCols.spotLinks && (
+                    <th className="px-2.5 py-2.5 text-center">{lang === "ar" ? "الإجراءات والتداول" : "Actions"}</th>
                   )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {loading ? (
                   <tr>
-                    <td colSpan={13} className="py-12 text-center text-slate-400">
-                      {lang === "ar" ? "جاري تحميل بيانات Binance Spot والسجل الشرعي..." : "Loading verified Binance Spot & Shariah records..."}
+                    <td colSpan={14} className="py-12 text-center text-slate-400">
+                      {lang === "ar"
+                        ? "جاري تحميل بيانات Binance وBybit Spot والسجل الشرعي..."
+                        : "Loading verified Binance & Bybit Spot records..."}
                     </td>
                   </tr>
                 ) : displayRows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="py-12 text-center text-slate-400">
+                    <td colSpan={14} className="py-12 text-center text-slate-400">
                       {lang === "ar"
                         ? "لا توجد عملات مطابقة للفلاتر الحالية."
                         : "No cryptocurrencies match your current filter criteria."}
@@ -714,12 +889,13 @@ export default function DashboardPage() {
                     const overallRiskMeta = RISK_META[row.overallRiskLevel];
                     const patch = livePatches[row.symbol];
                     const isPositive = (row.priceChangePct24h ?? 0) >= 0;
+                    const exchanges = row.exchanges || ["BINANCE"];
+                    const isUnanalyzed = row.shariahClassification === "UNVERIFIED";
+                    const isAiOpinion = row.shariahVerificationStatus === "AI_OPINION";
+                    const isRowAnalyzing = Boolean(analyzingSymbols[row.symbol]);
 
                     return (
-                      <tr
-                        key={row.symbol}
-                        className="group transition hover:bg-slate-900/75"
-                      >
+                      <tr key={row.symbol} className="group transition hover:bg-slate-900/75">
                         <td className="px-2.5 py-2.5 text-center font-mono-num text-slate-500">
                           <div className="flex items-center justify-center gap-1.5">
                             <input
@@ -749,16 +925,33 @@ export default function DashboardPage() {
                                 <span className="font-bold text-white group-hover:text-emerald-300">
                                   {row.baseAsset}
                                 </span>
-                                <span className="max-w-[130px] truncate text-[11px] text-slate-400">
+                                <span className="max-w-[125px] truncate text-[11px] text-slate-400">
                                   {row.name}
                                 </span>
                               </div>
-                              <div className="max-w-[175px] truncate text-[10px] text-slate-500">
+                              <div className="max-w-[170px] truncate text-[10px] text-slate-500">
                                 {row.category}
                               </div>
                             </Link>
                           </div>
                         </td>
+
+                        {visibleCols.exchanges && (
+                          <td className="px-2.5 py-2.5 text-center">
+                            <div className="inline-flex flex-wrap items-center justify-center gap-1">
+                              {exchanges.includes("BINANCE") && (
+                                <span className="rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono-num text-[10px] font-semibold text-amber-300">
+                                  Binance
+                                </span>
+                              )}
+                              {exchanges.includes("BYBIT") && (
+                                <span className="rounded border border-orange-500/35 bg-orange-500/10 px-1.5 py-0.5 font-mono-num text-[10px] font-semibold text-orange-300">
+                                  Bybit
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
 
                         <td
                           className={`px-2.5 py-2.5 text-end font-mono-num font-bold ${
@@ -769,7 +962,12 @@ export default function DashboardPage() {
                                 : "text-white"
                           }`}
                         >
-                          {formatPriceUsdt(row.priceUsdt)}
+                          <div>{formatPriceUsdt(row.priceUsdt)}</div>
+                          {row.binancePriceUsdt && row.bybitPriceUsdt && (
+                            <div className="text-[9px] font-normal text-slate-500">
+                              {row.primaryExchange === "BYBIT" ? "Bybit" : "Binance"}
+                            </div>
+                          )}
                         </td>
 
                         {visibleCols.change24h && (
@@ -810,16 +1008,54 @@ export default function DashboardPage() {
 
                         {visibleCols.shariah && (
                           <td className="px-2.5 py-2.5">
-                            <span
-                              className={`inline-block rounded border px-2 py-0.5 text-[11px] font-semibold ${shariahMeta.badgeClass}`}
-                            >
-                              {lang === "ar" ? shariahMeta.shortAr : shariahMeta.shortEn}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`inline-block rounded border px-2 py-0.5 text-[11px] font-semibold ${shariahMeta.badgeClass}`}
+                              >
+                                {lang === "ar" ? shariahMeta.shortAr : shariahMeta.shortEn}
+                              </span>
+
+                              {isAiOpinion && (
+                                <span className="inline-flex items-center gap-0.5 rounded border border-purple-500/40 bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-bold text-purple-200">
+                                  <Sparkles className="h-2.5 w-2.5" />
+                                  {lang === "ar" ? "تحليل AI" : "AI"}
+                                </span>
+                              )}
+
+                              {isUnanalyzed && (
+                                <button
+                                  onClick={() => handleAnalyzeSingleRow(row.symbol, false)}
+                                  disabled={isRowAnalyzing}
+                                  className="inline-flex items-center gap-1 rounded-md border border-purple-500/50 bg-purple-600/25 px-2 py-0.5 text-[10px] font-bold text-purple-100 transition hover:bg-purple-600/45 disabled:opacity-50"
+                                  title={
+                                    lang === "ar"
+                                      ? "إرسال العملة لوكيل الـ AI لتحليلها وإضافتها فوراً"
+                                      : "Analyze this unverified coin with AI and save to DB"
+                                  }
+                                >
+                                  {isRowAnalyzing ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="h-3 w-3 text-purple-300" />
+                                  )}
+                                  {isRowAnalyzing
+                                    ? lang === "ar"
+                                      ? "جاري التحليل..."
+                                      : "Analyzing..."
+                                    : lang === "ar"
+                                      ? "تحليل بالـ AI"
+                                      : "AI Analyze"}
+                                </button>
+                              )}
+                            </div>
                           </td>
                         )}
 
                         {visibleCols.authority && (
-                          <td className="max-w-[180px] truncate px-2.5 py-2.5 text-[11px] text-slate-300" title={row.shariahAuthority}>
+                          <td
+                            className="max-w-[175px] truncate px-2.5 py-2.5 text-[11px] text-slate-300"
+                            title={row.shariahAuthority}
+                          >
                             {row.shariahSourceUrl ? (
                               <a
                                 href={row.shariahSourceUrl}
@@ -831,7 +1067,9 @@ export default function DashboardPage() {
                                 <ExternalLink className="h-2.5 w-2.5 shrink-0 text-slate-500" />
                               </a>
                             ) : (
-                              <span className="text-slate-500">{row.shariahAuthority}</span>
+                              <span className={isAiOpinion ? "text-purple-300/90" : "text-slate-500"}>
+                                {row.shariahAuthority}
+                              </span>
                             )}
                           </td>
                         )}
@@ -851,7 +1089,7 @@ export default function DashboardPage() {
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-[10px] text-slate-500">N/A</span>
+                              <span className="text-[10px] text-slate-500">—</span>
                             )}
                           </td>
                         )}
@@ -871,14 +1109,16 @@ export default function DashboardPage() {
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-[10px] text-slate-500">N/A</span>
+                              <span className="text-[10px] text-slate-500">—</span>
                             )}
                           </td>
                         )}
 
                         {visibleCols.tokenomicsRisk && (
                           <td className="px-2.5 py-2.5 text-center">
-                            <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${tokRiskMeta.badgeClass}`}>
+                            <span
+                              className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${tokRiskMeta.badgeClass}`}
+                            >
                               {lang === "ar" ? tokRiskMeta.labelAr : tokRiskMeta.labelEn}
                             </span>
                           </td>
@@ -886,31 +1126,47 @@ export default function DashboardPage() {
 
                         {visibleCols.overallRisk && (
                           <td className="px-2.5 py-2.5 text-center">
-                            <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${overallRiskMeta.badgeClass}`}>
+                            <span
+                              className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${overallRiskMeta.badgeClass}`}
+                            >
                               {lang === "ar" ? overallRiskMeta.labelAr : overallRiskMeta.labelEn}
                             </span>
                           </td>
                         )}
 
-                        {visibleCols.binancePair && (
+                        {visibleCols.spotLinks && (
                           <td className="px-2.5 py-2.5 text-center">
-                            <div className="inline-flex items-center gap-1.5">
+                            <div className="inline-flex items-center gap-1">
                               <Link
                                 href={`/assets/${row.symbol}`}
                                 className="rounded border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:border-emerald-500/50 hover:text-emerald-300"
                               >
-                                {lang === "ar" ? "التحليل" : "Research"}
+                                {lang === "ar" ? "التحليل والسيولة" : "Research"}
                               </Link>
-                              <a
-                                href={row.binanceSpotUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono-num text-[10px] text-amber-300 hover:bg-amber-500/20"
-                                title="Open Binance Spot"
-                              >
-                                {row.baseAsset}/USDT
-                                <ExternalLink className="h-2.5 w-2.5" />
-                              </a>
+                              {exchanges.includes("BINANCE") && (
+                                <a
+                                  href={row.binanceSpotUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-0.5 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono-num text-[10px] text-amber-300 hover:bg-amber-500/20"
+                                  title="Binance Spot"
+                                >
+                                  B
+                                  <ExternalLink className="h-2.5 w-2.5" />
+                                </a>
+                              )}
+                              {exchanges.includes("BYBIT") && row.bybitSpotUrl && (
+                                <a
+                                  href={row.bybitSpotUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-0.5 rounded border border-orange-500/30 bg-orange-500/10 px-1.5 py-0.5 font-mono-num text-[10px] text-orange-300 hover:bg-orange-500/20"
+                                  title="Bybit Spot"
+                                >
+                                  Y
+                                  <ExternalLink className="h-2.5 w-2.5" />
+                                </a>
+                              )}
                             </div>
                           </td>
                         )}
@@ -926,8 +1182,8 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-4 py-2.5 text-xs text-slate-400">
             <div>
               {lang === "ar"
-                ? `عرض ${displayRows.length} من أصل ${total} زوج Binance Spot USDT مؤهل`
-                : `Showing ${displayRows.length} of ${total} verified Binance Spot USDT pairs`}
+                ? `عرض ${displayRows.length} من أصل ${total} زوج Spot USDT مؤهل (Binance + Bybit)`
+                : `Showing ${displayRows.length} of ${total} verified Spot USDT pairs (Binance + Bybit)`}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -959,11 +1215,11 @@ export default function DashboardPage() {
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
             <span>
               {lang === "ar"
-                ? "هذه المنصة أداة بحثية تحليلية للتداول الفوري (Spot) فقط، ولا تنفذ أي صفقات أو سحوبات، ولا تقدم فتوى شرعية إجماعية ولا نصيحة مالية أو ضماناً للعائد."
-                : "Analytical Spot-only research platform. Never executes trades or accesses funds. Classifications reflect cited third-party authorities and do not constitute an institutional fatwa or financial advice."}
+                ? "هذه المنصة أداة بحثية تحليلية للتداول الفوري (Spot) فقط على Binance وBybit، ولا تنفذ أي صفقات، ولا تقدم فتوى شرعية إجماعية ولا ضماناً للعائد."
+                : "Analytical Spot-only research platform for Binance & Bybit. Never executes trades. Classifications reflect cited third-party authorities or labeled AI opinions."}
             </span>
           </div>
-          <span className="font-mono-num text-slate-500">Binance Public Spot API • SQLite Local</span>
+          <span className="font-mono-num text-slate-500">Binance + Bybit Spot API • SQLite Local</span>
         </footer>
       </main>
 
@@ -972,6 +1228,15 @@ export default function DashboardPage() {
         open={showAiDrawer}
         onClose={() => setShowAiDrawer(false)}
         defaultSymbol={aiDefaultSymbol}
+        onOpenSettings={() => setShowAiSettingsModal(true)}
+        onBatchCompleted={() => {
+          loadDashboardSummary();
+          loadDirectory();
+        }}
+      />
+      <AiAgentSettingsModal
+        open={showAiSettingsModal}
+        onClose={() => setShowAiSettingsModal(false)}
       />
       <AlertsDrawer
         open={showAlertsDrawer}

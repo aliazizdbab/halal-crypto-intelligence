@@ -19,10 +19,10 @@ export function ensureSeeded(force = false): { insertedAssets: number } {
   runInTransaction((tx) => {
     const upsertAsset = tx.prepare(`
       INSERT INTO assets (
-        symbol, base_asset, quote_asset, name, category, binance_status, is_spot_allowed,
+        symbol, base_asset, quote_asset, name, category, binance_status, bybit_status, is_spot_allowed,
         spot_verified_at, official_website, github_repo, coingecko_id,
         description_en, description_ar, is_curated, created_at, updated_at
-      ) VALUES (?, ?, 'USDT', ?, ?, 'TRADING', 1, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      ) VALUES (?, ?, 'USDT', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(symbol) DO UPDATE SET
         name = excluded.name,
         category = excluded.category,
@@ -82,11 +82,17 @@ export function ensureSeeded(force = false): { insertedAssets: number } {
 
     for (const item of VERIFIED_SEED_ASSETS) {
       const existed = existingCheck.get(item.symbol);
+      const itemExchanges = item.exchanges ?? ["BINANCE", "BYBIT"];
+      const binStatus = itemExchanges.includes("BINANCE") ? "TRADING" : "NOT_LISTED";
+      const bybStatus = itemExchanges.includes("BYBIT") ? "TRADING" : "NOT_LISTED";
+
       upsertAsset.run(
         item.symbol,
         item.baseAsset,
         item.name,
         item.category,
+        binStatus,
+        bybStatus,
         now,
         item.officialWebsite,
         item.githubRepo,

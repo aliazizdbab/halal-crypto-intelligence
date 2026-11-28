@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchBinanceKlines, SUPPORTED_TIMEFRAMES, type SupportedTimeframe } from "@/lib/services/binance";
+import { fetchBybitKlines } from "@/lib/services/bybit";
 import { analyzeTechnicals } from "@/lib/services/technical-analysis";
 import { getAssetDetail } from "@/lib/services/repository";
 
@@ -14,6 +15,7 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const tfParam = (searchParams.get("timeframe") || "4h") as SupportedTimeframe;
     const timeframe: SupportedTimeframe = SUPPORTED_TIMEFRAMES.includes(tfParam) ? tfParam : "4h";
+    const venueParam = (searchParams.get("venue") || "AUTO").toUpperCase();
     const limit = Math.min(500, Math.max(100, Number(searchParams.get("limit") || "250") || 250));
 
     const safeSymbol = symbol.toUpperCase().endsWith("USDT")
@@ -21,7 +23,27 @@ export async function GET(
       : `${symbol.toUpperCase()}USDT`;
 
     const detail = getAssetDetail(safeSymbol);
-    const klines = await fetchBinanceKlines(safeSymbol, timeframe, limit);
+    const preferBybit =
+      venueParam === "BYBIT" ||
+      (venueParam === "AUTO" &&
+        detail?.overview.binanceStatus !== "TRADING" &&
+        detail?.overview.bybitStatus === "TRADING");
+
+    let klines: { candles: Awaited<ReturnType<typeof fetchBinanceKlines>>["candles"]; source: string; fetchedAt: string };
+
+    if (preferBybit) {
+      try {
+        klines = await fetchBybitKlines(safeSymbol, timeframe, limit);
+      } catch {
+        klines = await fetchBinanceKlines(safeSymbol, timeframe, limit);
+      }
+    } else {
+      try {
+        klines = await fetchBinanceKlines(safeSymbol, timeframe, limit);
+      } catch {
+        klines = await fetchBybitKlines(safeSymbol, timeframe, limit);
+      }
+    }
 
     const analysis = analyzeTechnicals({
       symbol: safeSymbol,

@@ -1,9 +1,9 @@
 {
   "name": "halal-crypto-intelligence",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "main": "desktop/main.cjs",
-  "description": "Institutional-grade Shariah-compliant cryptocurrency screening, Binance Spot market analytics, tokenomics, technical analysis & research platform.",
+  "description": "Institutional-grade Shariah-compliant cryptocurrency screening, Binance & Bybit Spot market analytics, order-book liquidity, tokenomics, technical analysis & AI research platform.",
   "repository": {
     "type": "git",
     "url": "https://github.com/aliazizdbab/halal-crypto-intelligence.git"
@@ -17,10 +17,11 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "icons:generate": "node scripts/generate-icons.mjs",
+    "mobile:build": "node scripts/build-mobile.mjs",
     "desktop:dev": "npm run build && electron .",
     "desktop:pack": "npm run build && electron-builder --win --dir",
     "desktop:build": "npm run build && electron-builder --win",
-    "android:sync": "npx cap sync android"
+    "android:sync": "node scripts/build-mobile.mjs && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^7.1.0",

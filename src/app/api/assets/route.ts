@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDirectoryAssets, type DirectorySortOption } from "@/lib/services/repository";
-import type { RiskLevel, ShariahClassification } from "@/types/domain";
+import type { ExchangeFilter, RiskLevel, ShariahClassification } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +13,14 @@ const VALID_CLASSIFICATIONS = new Set<ShariahClassification>([
 ]);
 
 const VALID_RISKS = new Set<RiskLevel>(["LOW", "MODERATE", "HIGH", "VERY_HIGH", "UNAVAILABLE"]);
+
+const VALID_EXCHANGES = new Set<ExchangeFilter>([
+  "ALL",
+  "BINANCE",
+  "BYBIT",
+  "BYBIT_EXCLUSIVE",
+  "BINANCE_EXCLUSIVE",
+]);
 
 const VALID_SORTS = new Set<DirectorySortOption>([
   "price_asc",
@@ -51,6 +59,9 @@ export async function GET(request: Request) {
           .filter((r) => VALID_RISKS.has(r))
       : undefined;
 
+    const exchangeRaw = (searchParams.get("exchange") || "ALL").toUpperCase() as ExchangeFilter;
+    const exchange: ExchangeFilter = VALID_EXCHANGES.has(exchangeRaw) ? exchangeRaw : "ALL";
+
     const sortRaw = (searchParams.get("sort") || "price_asc") as DirectorySortOption;
     const sort: DirectorySortOption = VALID_SORTS.has(sortRaw) ? sortRaw : "price_asc";
 
@@ -70,6 +81,7 @@ export async function GET(request: Request) {
 
     const result = getDirectoryAssets({
       classifications,
+      exchange,
       riskLevels,
       sort,
       page,

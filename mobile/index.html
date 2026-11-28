@@ -2,171 +2,19 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Halal Crypto Intelligence — Android</title>
-  <style>
-    :root { --bg:#060a13; --panel:#0b1120; --border:rgba(148,163,184,0.18); --emerald:#10b981; --text:#f1f5f9; --muted:#94a3b8; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:18px; }
-    .container { max-width:560px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
-    .card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:16px; }
-    .badge { display:inline-block; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#6ee7b7; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; }
-    h1 { margin:8px 0 4px; font-size:20px; }
-    p { margin:0; color:var(--muted); font-size:12px; line-height:1.6; }
-    label { display:block; font-size:12px; color:#cbd5e1; margin-bottom:6px; font-weight:600; }
-    input { width:100%; background:#020617; border:1px solid #334155; color:#fff; border-radius:10px; padding:11px 12px; font-size:13px; direction:ltr; }
-    button, .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; width:100%; border:none; border-radius:10px; padding:11px 14px; font-size:13px; font-weight:700; cursor:pointer; text-decoration:none; }
-    .btn-primary { background:var(--emerald); color:#022c22; }
-    .btn-secondary { background:#1e293b; color:#e2e8f0; border:1px solid #334155; }
-    .btn-update { background:#0ea5e9; color:#082f49; }
-    .row { display:flex; gap:8px; margin-top:10px; }
-    .update-box { display:none; border:1px solid rgba(14,165,233,0.45); background:rgba(14,165,233,0.1); border-radius:12px; padding:12px; font-size:12px; }
-    table { width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; }
-    th, td { padding:7px 4px; border-bottom:1px solid rgba(148,163,184,0.12); text-align:start; }
-    td.num, th.num { text-align:end; font-family: ui-monospace, monospace; direction:ltr; }
-    .pos { color:#34d399; } .neg { color:#fb7185; }
-    .status { font-size:11px; color:#94a3b8; margin-top:6px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Halal Crypto Intelligence</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div class="container">
-    <div class="card">
-      <span class="badge">SPOT ONLY • v<span id="appVer">1.0.0</span></span>
-      <h1>منصة الاستخبارات الشرعية للكريبتو</h1>
-      <p>تطبيق Android الرسمي المرتبط بـ GitHub Releases للتحديث التلقائي وببيانات Binance Spot الحية.</p>
-    </div>
-
-    <div id="updateBox" class="update-box">
-      <div style="font-weight:700; color:#7dd3fc; margin-bottom:6px;">
-        يتوفر تحديث جديد للتطبيق: <span id="latestVer"></span>
-      </div>
-      <a id="apkDownloadBtn" class="btn btn-update" href="#" target="_blank">تنزيل وتثبيت التحديث الجديد (.apk)</a>
-    </div>
-
-    <div class="card">
-      <label for="serverUrl">رابط خادم المنصة (السحابي أو الشبكة المحلية Wi-Fi)</label>
-      <input id="serverUrl" type="url" placeholder="https://your-app.onrender.com  أو  http://192.168.0.190:3000" />
-      <div class="row">
-        <button class="btn-primary" onclick="connectServer()">فتح المنصة الكاملة</button>
-        <button class="btn-secondary" style="width:auto; white-space:nowrap;" onclick="checkGithubUpdate(true)">فحص التحديث</button>
-      </div>
-      <div id="connectStatus" class="status">أدخل رابط الخادم السحابي (Render/Railway) أو رابط جهازك على Wi-Fi ليتم حفظه والاتصال تلقائياً.</div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <strong style="font-size:13px;">الأسعار الحية السريعة (Binance Spot — الأقل سعراً)</strong>
-        <button class="btn-secondary" style="width:auto; padding:5px 10px; font-size:11px;" onclick="loadQuickPrices()">تحديث</button>
-      </div>
-      <p style="margin-top:4px;">يعمل مباشرة من Binance Spot Public API حتى بدون ربط خادم خارجي.</p>
-      <table>
-        <thead>
-          <tr><th>العملة</th><th>التصنيف</th><th class="num">السعر USDT</th><th class="num">24س</th></tr>
-        </thead>
-        <tbody id="quickRows">
-          <tr><td colspan="4" style="text-align:center; color:#64748b;">جاري تحميل أسعار Binance Spot...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+  <div id="hciAppRoot"></div>
+  <div id="hciDetailPortal"></div>
 
   <script>
-    const CURRENT_VERSION = "1.0.0";
-    const GITHUB_REPO = "aliazizdbab/halal-crypto-intelligence";
-    document.getElementById("appVer").textContent = CURRENT_VERSION;
-
-    const HALAL_QUICK = [
-      { s: "VETUSDT", b: "VET", tag: "مباح بشروط" },
-      { s: "FLOWUSDT", b: "FLOW", tag: "مباح" },
-      { s: "GRTUSDT", b: "GRT", tag: "مباح" },
-      { s: "ALGOUSDT", b: "ALGO", tag: "مباح (SRB)" },
-      { s: "HBARUSDT", b: "HBAR", tag: "مباح" },
-      { s: "XLMUSDT", b: "XLM", tag: "مباح (SRB)" },
-      { s: "ADAUSDT", b: "ADA", tag: "مباح" },
-      { s: "XRPUSDT", b: "XRP", tag: "مباح" },
-      { s: "LINKUSDT", b: "LINK", tag: "مباح" },
-      { s: "SOLUSDT", b: "SOL", tag: "مباح" },
-      { s: "ETHUSDT", b: "ETH", tag: "مباح" },
-      { s: "BTCUSDT", b: "BTC", tag: "مباح" }
-    ];
-
-    function cmpSemver(a, b) {
-      const pa = a.replace(/^v/i, "").split(".").map(Number);
-      const pb = b.replace(/^v/i, "").split(".").map(Number);
-      for (let i = 0; i < 3; i++) {
-        if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-        if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-      }
-      return 0;
-    }
-
-    async function checkGithubUpdate(showAlert) {
-      try {
-        const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const tag = (data.tag_name || "").replace(/^v/i, "");
-        const apk = (data.assets || []).find(a => a.name.toLowerCase().endsWith(".apk"));
-        if (tag && cmpSemver(tag, CURRENT_VERSION) > 0) {
-          document.getElementById("latestVer").textContent = "v" + tag;
-          const btn = document.getElementById("apkDownloadBtn");
-          btn.href = apk ? apk.browser_download_url : data.html_url;
-          document.getElementById("updateBox").style.display = "block";
-        } else if (showAlert) {
-          document.getElementById("connectStatus").textContent = "أنت تستخدم أحدث إصدار من التطبيق (v" + CURRENT_VERSION + ").";
-        }
-      } catch {
-        if (showAlert) document.getElementById("connectStatus").textContent = "تعذر الاتصال بـ GitHub لفحص التحديثات.";
-      }
-    }
-
-    async function connectServer() {
-      const input = document.getElementById("serverUrl");
-      const url = (input.value || "").trim().replace(/\/+$/, "");
-      if (!url) return;
-      const st = document.getElementById("connectStatus");
-      st.textContent = "جاري التحقق من الخادم...";
-      try {
-        const res = await fetch(url + "/api/version", { cache: "no-store" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        localStorage.setItem("hci_server_url", url);
-        window.location.href = url;
-      } catch (e) {
-        st.textContent = "تعذر الوصول للرابط (" + url + "). تأكد من تشغيل الخادم أو الاتصال بنفس شبكة Wi-Fi.";
-      }
-    }
-
-    async function loadQuickPrices() {
-      const tbody = document.getElementById("quickRows");
-      try {
-        const symbolsParam = encodeURIComponent(JSON.stringify(HALAL_QUICK.map(x => x.s)));
-        let res = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbols=" + symbolsParam);
-        if (!res.ok) res = await fetch("https://data-api.binance.vision/api/v3/ticker/24hr?symbols=" + symbolsParam);
-        const tickers = await res.json();
-        const map = new Map(tickers.map(t => [t.symbol, t]));
-        const items = HALAL_QUICK.map(c => {
-          const t = map.get(c.s);
-          return { ...c, price: t ? parseFloat(t.lastPrice) : null, pct: t ? parseFloat(t.priceChangePercent) : null };
-        }).filter(x => x.price !== null).sort((a, b) => a.price - b.price);
-
-        tbody.innerHTML = items.map(x => {
-          const pStr = x.price >= 100 ? "$" + x.price.toFixed(2) : x.price >= 1 ? "$" + x.price.toFixed(4) : "$" + x.price.toFixed(6);
-          const pctCls = (x.pct || 0) >= 0 ? "pos" : "neg";
-          const pctStr = (x.pct >= 0 ? "+" : "") + x.pct.toFixed(2) + "%";
-          return `<tr><td><strong>${x.b}</strong></td><td style="color:#6ee7b7">${x.tag}</td><td class="num">${pStr}</td><td class="num ${pctCls}">${pctStr}</td></tr>`;
-        }).join("");
-      } catch {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#fb7185;">تعذر جلب الأسعار الحية من Binance</td></tr>';
-      }
-    }
-
-    // Restore saved server URL if previously configured
-    const saved = localStorage.getItem("hci_server_url");
-    if (saved) {
-      document.getElementById("serverUrl").value = saved;
-    }
-    checkGithubUpdate(false);
-    loadQuickPrices();
+    const CURRENT_VERSION = "1.1.0";
+    window.HCI_APP_VERSION = CURRENT_VERSION;
   </script>
+  <script src="./seed-data.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>

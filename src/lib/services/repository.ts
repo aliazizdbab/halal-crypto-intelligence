@@ -11,6 +11,8 @@ import {
   type CredibilityFactorKey,
   type CredibilityFactorRecord,
   type DashboardSummary,
+  type ExchangeFilter,
+  type ExchangeVenue,
   type HistoricalSnapshotRecord,
   type InvestmentScenarioRecord,
   type RiskLevel,
@@ -34,6 +36,7 @@ export type DirectorySortOption =
 
 export interface DirectoryQueryOptions {
   classifications?: ShariahClassification[] | "ALL";
+  exchange?: ExchangeFilter;
   search?: string;
   riskLevels?: RiskLevel[];
   minCredibility?: number;
@@ -63,6 +66,7 @@ interface RawAssetJoinRow {
   name: string;
   category: string;
   binance_status: string;
+  bybit_status: string;
   is_spot_allowed: number;
   spot_verified_at: string;
   official_website: string | null;
@@ -70,10 +74,14 @@ interface RawAssetJoinRow {
   description_en: string;
   description_ar: string;
   price_usdt: number | null;
+  binance_price_usdt: number | null;
+  bybit_price_usdt: number | null;
   price_change_24h: number | null;
   price_change_pct_24h: number | null;
   volume_24h: number | null;
   quote_volume_24h: number | null;
+  binance_quote_volume_24h: number | null;
+  bybit_quote_volume_24h: number | null;
   high_24h: number | null;
   low_24h: number | null;
   bid_price: number | null;
@@ -84,10 +92,12 @@ interface RawAssetJoinRow {
   circulating_supply: number | null;
   total_supply: number | null;
   max_supply: number | null;
+  primary_exchange: string | null;
   price_source: string | null;
   market_cap_source: string | null;
   market_fetched_at: string | null;
   shariah_classification: ShariahClassification | null;
+  shariah_verification_status: VerificationStatus | null;
   authority_name: string | null;
   shariah_source_url: string | null;
   assessment_date: string | null;
@@ -155,20 +165,24 @@ export function buildAllEvaluatedRows(includeInactive = false): AssetDirectoryRo
 
   const whereClause = includeInactive
     ? "WHERE a.quote_asset = 'USDT'"
-    : "WHERE a.binance_status = 'TRADING' AND a.is_spot_allowed = 1 AND a.quote_asset = 'USDT'";
+    : "WHERE (a.binance_status = 'TRADING' OR a.bybit_status = 'TRADING') AND a.is_spot_allowed = 1 AND a.quote_asset = 'USDT'";
 
   const rawRows = db
     .prepare(
       `SELECT
         a.symbol, a.base_asset, a.quote_asset, a.name, a.category,
-        a.binance_status, a.is_spot_allowed, a.spot_verified_at,
+        a.binance_status, a.bybit_status, a.is_spot_allowed, a.spot_verified_at,
         a.official_website, a.github_repo, a.description_en, a.description_ar,
-        m.price_usdt, m.price_change_24h, m.price_change_pct_24h,
-        m.volume_24h, m.quote_volume_24h, m.high_24h, m.low_24h,
+        m.price_usdt, m.binance_price_usdt, m.bybit_price_usdt,
+        m.price_change_24h, m.price_change_pct_24h,
+        m.volume_24h, m.quote_volume_24h, m.binance_quote_volume_24h, m.bybit_quote_volume_24h,
+        m.high_24h, m.low_24h,
         m.bid_price, m.ask_price, m.spread_pct,
         m.market_cap, m.fdv, m.circulating_supply, m.total_supply, m.max_supply,
-        m.price_source, m.market_cap_source, m.fetched_at AS market_fetched_at,
-        s.classification AS shariah_classification, s.authority_name,
+        m.primary_exchange, m.price_source, m.market_cap_source, m.fetched_at AS market_fetched_at,
+        s.classification AS shariah_classification,
+        s.verification_status AS shariah_verification_status,
+        s.authority_name,
         s.source_url AS shariah_source_url, s.assessment_date, s.methodology,
         s.conditions_en, s.conditions_ar,
         s.scholarly_disagreements_en, s.scholarly_disagreements_ar,
@@ -199,6 +213,16 @@ export function buildAllEvaluatedRows(includeInactive = false): AssetDirectoryRo
         parsedFlags = [];
       }
     }
+
+    const exchanges: ExchangeVenue[] = [];
+    if (r.binance_status === "TRADING") exchanges.push("BINANCE");
+    if (r.bybit_status === "TRADING") exchanges.push("BYBIT");
+    if (exchanges.length === 0) exchanges.push("BINANCE");
+
+    const primaryExchange: ExchangeVenue =
+      r.primary_exchange === "BYBIT" || (r.binance_status !== "TRADING" && r.bybit_status === "TRADING")
+        ? "BYBIT"
+        : "BINANCE";
 
     const inv = computeInvestmentPotential({
       category: r.category,
@@ -232,16 +256,24 @@ export function buildAllEvaluatedRows(includeInactive = false): AssetDirectoryRo
       name: r.name,
       category: r.category,
       binanceStatus: r.binance_status,
+      bybitStatus: r.bybit_status,
+      exchanges,
+      primaryExchange,
       isSpotAllowed: r.is_spot_allowed === 1,
       spotVerifiedAt: r.spot_verified_at,
       officialWebsite: r.official_website,
       githubRepo: r.github_repo,
       binanceSpotUrl: `https://www.binance.com/en/trade/${r.base_asset}_${r.quote_asset}?type=spot`,
+      bybitSpotUrl: `https://www.bybit.com/en/trade/spot/${r.base_asset}/${r.quote_asset}`,
       priceUsdt: r.price_usdt,
+      binancePriceUsdt: r.binance_price_usdt,
+      bybitPriceUsdt: r.bybit_price_usdt,
       priceChange24h: r.price_change_24h,
       priceChangePct24h: r.price_change_pct_24h,
       volume24h: r.volume_24h,
       quoteVolume24h: r.quote_volume_24h,
+      binanceQuoteVolume24h: r.binance_quote_volume_24h,
+      bybitQuoteVolume24h: r.bybit_quote_volume_24h,
       high24h: r.high_24h,
       low24h: r.low_24h,
       bidPrice: r.bid_price,
@@ -252,9 +284,10 @@ export function buildAllEvaluatedRows(includeInactive = false): AssetDirectoryRo
       circulatingSupply: r.circulating_supply,
       maxSupply: r.max_supply,
       marketFetchedAt: r.market_fetched_at,
-      priceSource: r.price_source || "Binance Spot Public API",
+      priceSource: r.price_source || (primaryExchange === "BYBIT" ? "Bybit Spot Public API" : "Binance Spot Public API"),
       marketCapSource: r.market_cap_source,
       shariahClassification: r.shariah_classification || "UNVERIFIED",
+      shariahVerificationStatus: r.shariah_verification_status || "UNVERIFIED",
       shariahAuthority: r.authority_name || "DATA UNAVAILABLE – REQUIRES VERIFICATION",
       shariahSourceUrl: r.shariah_source_url,
       shariahAssessmentDate: r.assessment_date,
@@ -303,6 +336,25 @@ export function getDirectoryAssets(options: DirectoryQueryOptions = {}): Directo
         : ["HALAL", "HALAL_WITH_CONDITIONS"]
     );
     rows = rows.filter((r) => allowed.has(r.shariahClassification));
+  }
+
+  // Filter by Spot Exchange venue
+  if (options.exchange && options.exchange !== "ALL") {
+    rows = rows.filter((r) => {
+      const ex = r.exchanges || ["BINANCE"];
+      switch (options.exchange) {
+        case "BINANCE":
+          return ex.includes("BINANCE");
+        case "BYBIT":
+          return ex.includes("BYBIT");
+        case "BYBIT_EXCLUSIVE":
+          return ex.includes("BYBIT") && !ex.includes("BINANCE");
+        case "BINANCE_EXCLUSIVE":
+          return ex.includes("BINANCE") && !ex.includes("BYBIT");
+        default:
+          return true;
+      }
+    });
   }
 
   // Search filter
@@ -403,7 +455,10 @@ export function getDashboardSummary(): DashboardSummary {
   const countScholarlyDisagreement = allRows.filter((r) => r.shariahClassification === "SCHOLARLY_DISAGREEMENT").length;
   const countNonCompliant = allRows.filter((r) => r.shariahClassification === "NON_COMPLIANT").length;
   const countUnverified = allRows.filter((r) => r.shariahClassification === "UNVERIFIED").length;
+  const countAiScreened = allRows.filter((r) => r.shariahVerificationStatus === "AI_OPINION").length;
   const screened = allRows.filter((r) => r.shariahClassification !== "UNVERIFIED");
+  const totalBinancePairs = allRows.filter((r) => r.exchanges?.includes("BINANCE")).length;
+  const totalBybitPairs = allRows.filter((r) => r.exchanges?.includes("BYBIT")).length;
 
   const totalScreenedMarketCap = screened.reduce((acc, r) => acc + (r.marketCap || 0), 0);
 
@@ -424,7 +479,7 @@ export function getDashboardSummary(): DashboardSummary {
       `SELECT a.symbol, a.name, a.base_asset, a.created_at, COALESCE(s.classification, 'UNVERIFIED') AS classification
        FROM assets a
        LEFT JOIN shariah_assessments s ON s.symbol = a.symbol
-       WHERE a.binance_status = 'TRADING' AND a.is_spot_allowed = 1
+       WHERE (a.binance_status = 'TRADING' OR a.bybit_status = 'TRADING') AND a.is_spot_allowed = 1
        ORDER BY a.created_at DESC
        LIMIT 6`
     )
@@ -476,21 +531,30 @@ export function getDashboardSummary(): DashboardSummary {
     .prepare("SELECT status, last_synced_at FROM sync_status WHERE service_name = 'binance_spot'")
     .get() as { status: string; last_synced_at: string } | undefined;
 
+  const bybitSync = db
+    .prepare("SELECT status, last_synced_at FROM sync_status WHERE service_name = 'bybit_spot'")
+    .get() as { status: string; last_synced_at: string } | undefined;
+
   const mcapSync = db
     .prepare("SELECT last_synced_at FROM sync_status WHERE service_name = 'market_cap'")
     .get() as { last_synced_at: string } | undefined;
 
   const binanceStatus =
     (binanceSync?.status as DashboardSummary["binanceConnectionStatus"]) || "NOT_SYNCED";
+  const bybitStatus =
+    (bybitSync?.status as DashboardSummary["bybitConnectionStatus"]) || "NOT_SYNCED";
 
   return {
-    totalBinanceSpotUsdtPairs: allRows.length,
+    totalBinanceSpotUsdtPairs: totalBinancePairs || allRows.length,
+    totalBybitSpotUsdtPairs: totalBybitPairs,
+    totalUnifiedSpotPairs: allRows.length,
     totalScreenedAssets: screened.length,
     countHalal,
     countHalalWithConditions,
     countScholarlyDisagreement,
     countNonCompliant,
     countUnverified,
+    countAiScreened,
     totalScreenedMarketCap,
     averageCredibilityScore,
     averageInvestmentPotentialScore,
@@ -517,8 +581,10 @@ export function getDashboardSummary(): DashboardSummary {
       summaryAr: r.unlock_schedule_summary_ar,
     })),
     lastBinanceSyncAt: binanceSync?.last_synced_at ?? null,
+    lastBybitSyncAt: bybitSync?.last_synced_at ?? null,
     lastMarketCapSyncAt: mcapSync?.last_synced_at ?? null,
     binanceConnectionStatus: binanceStatus,
+    bybitConnectionStatus: bybitStatus,
   };
 }
 
@@ -565,6 +631,7 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
         name: string;
         category: string;
         binance_status: string;
+        bybit_status?: string;
         is_spot_allowed: number;
         spot_verified_at: string;
         official_website: string | null;
@@ -580,10 +647,14 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
   const market = db.prepare("SELECT * FROM market_snapshots WHERE symbol = ?").get(sym) as
     | {
         price_usdt: number | null;
+        binance_price_usdt?: number | null;
+        bybit_price_usdt?: number | null;
         price_change_24h: number | null;
         price_change_pct_24h: number | null;
         volume_24h: number | null;
         quote_volume_24h: number | null;
+        binance_quote_volume_24h?: number | null;
+        bybit_quote_volume_24h?: number | null;
         high_24h: number | null;
         low_24h: number | null;
         bid_price: number | null;
@@ -594,6 +665,7 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
         circulating_supply: number | null;
         total_supply: number | null;
         max_supply: number | null;
+        primary_exchange?: string | null;
         price_source: string;
         market_cap_source: string | null;
         fetched_at: string;
@@ -870,6 +942,17 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
       ? Number((credCalc.score * 0.52 + invCalc.score * 0.48).toFixed(1))
       : null;
 
+  const detailExchanges: ExchangeVenue[] = [];
+  if (assetRow.binance_status === "TRADING") detailExchanges.push("BINANCE");
+  if (assetRow.bybit_status === "TRADING") detailExchanges.push("BYBIT");
+  if (detailExchanges.length === 0) detailExchanges.push("BINANCE");
+
+  const detailPrimaryExchange: ExchangeVenue =
+    market?.primary_exchange === "BYBIT" ||
+    (assetRow.binance_status !== "TRADING" && assetRow.bybit_status === "TRADING")
+      ? "BYBIT"
+      : "BINANCE";
+
   return {
     overview: {
       rank: 0,
@@ -879,18 +962,26 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
       name: assetRow.name,
       category: assetRow.category,
       binanceStatus: assetRow.binance_status,
+      bybitStatus: assetRow.bybit_status || "NOT_LISTED",
+      exchanges: detailExchanges,
+      primaryExchange: detailPrimaryExchange,
       isSpotAllowed: assetRow.is_spot_allowed === 1,
       spotVerifiedAt: assetRow.spot_verified_at,
       officialWebsite: assetRow.official_website,
       githubRepo: assetRow.github_repo,
       binanceSpotUrl: `https://www.binance.com/en/trade/${assetRow.base_asset}_${assetRow.quote_asset}?type=spot`,
+      bybitSpotUrl: `https://www.bybit.com/en/trade/spot/${assetRow.base_asset}/${assetRow.quote_asset}`,
       descriptionEn: assetRow.description_en || "DATA UNAVAILABLE – REQUIRES VERIFICATION",
       descriptionAr: assetRow.description_ar || "البيانات غير متوفرة – تتطلب تحققاً",
       priceUsdt: market?.price_usdt ?? null,
+      binancePriceUsdt: market?.binance_price_usdt ?? null,
+      bybitPriceUsdt: market?.bybit_price_usdt ?? null,
       priceChange24h: market?.price_change_24h ?? null,
       priceChangePct24h: market?.price_change_pct_24h ?? null,
       volume24h: market?.volume_24h ?? null,
       quoteVolume24h: market?.quote_volume_24h ?? null,
+      binanceQuoteVolume24h: market?.binance_quote_volume_24h ?? null,
+      bybitQuoteVolume24h: market?.bybit_quote_volume_24h ?? null,
       high24h: market?.high_24h ?? null,
       low24h: market?.low_24h ?? null,
       bidPrice: market?.bid_price ?? null,
@@ -902,9 +993,12 @@ export function getAssetDetail(symbolParam: string): AssetFullDetail | null {
       totalSupply: market?.total_supply ?? null,
       maxSupply: market?.max_supply ?? null,
       marketFetchedAt: market?.fetched_at ?? null,
-      priceSource: market?.price_source || "Binance Spot Public API",
+      priceSource:
+        market?.price_source ||
+        (detailPrimaryExchange === "BYBIT" ? "Bybit Spot Public API" : "Binance Spot Public API"),
       marketCapSource: market?.market_cap_source ?? null,
       shariahClassification: shariah.classification,
+      shariahVerificationStatus: shariah.verificationStatus,
       shariahAuthority: shariah.authorityName,
       shariahSourceUrl: shariah.sourceUrl,
       shariahAssessmentDate: shariah.assessmentDate,
@@ -1258,4 +1352,302 @@ export function getAlertRules(): AlertRuleRecord[] {
     notifyTelegram: r.notify_telegram === 1,
     createdAt: r.created_at,
   }));
+}
+
+export interface FullAiAssetAnalysisPayload {
+  symbol: string;
+  name?: string;
+  category: string;
+  officialWebsite?: string | null;
+  descriptionEn: string;
+  descriptionAr: string;
+  aiModelLabel: string;
+  overwriteVerified?: boolean;
+  shariah: {
+    classification: ShariahClassification;
+    methodology: string;
+    coreActivityNotesEn: string;
+    coreActivityNotesAr: string;
+    conditionsEn?: string | null;
+    conditionsAr?: string | null;
+    scholarlyDisagreementsEn?: string | null;
+    scholarlyDisagreementsAr?: string | null;
+    confidenceLevel: ConfidenceLevel;
+  };
+  tokenomics: {
+    inflationRatePct: number | null;
+    insiderAllocationPct: number | null;
+    unlockScheduleSummaryEn: string;
+    unlockScheduleSummaryAr: string;
+    tokenUtilityEn: string;
+    tokenUtilityAr: string;
+    burnMechanismEn: string;
+    burnMechanismAr: string;
+    stakingMechanismEn: string;
+    stakingMechanismAr: string;
+    governanceRightsEn: string;
+    governanceRightsAr: string;
+    riskFlags: string[];
+    tokenomicsRisk: RiskLevel;
+  };
+  credibility: Array<{
+    factorKey: CredibilityFactorKey;
+    score: number;
+    evidenceEn: string;
+    evidenceAr: string;
+  }>;
+  scenarios: Array<{
+    scenarioType: "BEARISH" | "BASE" | "BULLISH";
+    assumptionsEn: string;
+    assumptionsAr: string;
+    catalystsEn: string;
+    catalystsAr: string;
+    risksEn: string;
+    risksAr: string;
+    timeHorizon: string;
+  }>;
+}
+
+export function upsertFullAiAssetAnalysis(payload: FullAiAssetAnalysisPayload): {
+  symbol: string;
+  savedShariah: boolean;
+  classification: ShariahClassification;
+} {
+  ensureSeeded();
+  const db = getDb();
+  const symbol = payload.symbol.toUpperCase().endsWith("USDT")
+    ? payload.symbol.toUpperCase()
+    : `${payload.symbol.toUpperCase()}USDT`;
+  const baseAsset = symbol.replace(/USDT$/, "");
+  const now = new Date().toISOString();
+
+  const existingShariah = db
+    .prepare("SELECT classification, verification_status FROM shariah_assessments WHERE symbol = ?")
+    .get(symbol) as { classification: ShariahClassification; verification_status: VerificationStatus } | undefined;
+
+  const isAlreadyHumanVerified =
+    existingShariah &&
+    existingShariah.classification !== "UNVERIFIED" &&
+    (existingShariah.verification_status === "VERIFIED" ||
+      existingShariah.verification_status === "THIRD_PARTY_ASSESSMENT");
+
+  const shouldWriteShariah = !isAlreadyHumanVerified || Boolean(payload.overwriteVerified);
+  const authorityLabel = `تحليل AI أولي (${payload.aiModelLabel}) — يتطلب مراجعة شرعية`;
+
+  runInTransaction((tx) => {
+    const assetRow = tx.prepare("SELECT symbol, name FROM assets WHERE symbol = ?").get(symbol) as
+      | { symbol: string; name: string }
+      | undefined;
+
+    if (!assetRow) {
+      tx.prepare(
+        `INSERT INTO assets (
+          symbol, base_asset, quote_asset, name, category, binance_status, bybit_status,
+          is_spot_allowed, spot_verified_at, official_website, description_en, description_ar,
+          is_curated, created_at, updated_at
+        ) VALUES (?, ?, 'USDT', ?, ?, 'TRADING', 'NOT_LISTED', 1, ?, ?, ?, ?, 0, ?, ?)`
+      ).run(
+        symbol,
+        baseAsset,
+        payload.name || baseAsset,
+        payload.category,
+        now,
+        payload.officialWebsite ?? null,
+        payload.descriptionEn,
+        payload.descriptionAr,
+        now,
+        now
+      );
+    } else {
+      tx.prepare(
+        `UPDATE assets
+         SET name = COALESCE(?, name),
+             category = ?,
+             official_website = COALESCE(?, official_website),
+             description_en = ?,
+             description_ar = ?,
+             updated_at = ?
+         WHERE symbol = ?`
+      ).run(
+        payload.name || null,
+        payload.category,
+        payload.officialWebsite ?? null,
+        payload.descriptionEn,
+        payload.descriptionAr,
+        now,
+        symbol
+      );
+    }
+
+    if (shouldWriteShariah) {
+      tx.prepare(
+        `INSERT INTO shariah_assessments (
+          symbol, base_asset, classification, authority_name, source_url, assessment_date,
+          methodology, core_activity_notes_en, core_activity_notes_ar,
+          conditions_en, conditions_ar, scholarly_disagreements_en, scholarly_disagreements_ar,
+          verification_status, confidence_level, last_verified_at
+        ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_OPINION', ?, ?)
+        ON CONFLICT(symbol) DO UPDATE SET
+          classification = excluded.classification,
+          authority_name = excluded.authority_name,
+          assessment_date = excluded.assessment_date,
+          methodology = excluded.methodology,
+          core_activity_notes_en = excluded.core_activity_notes_en,
+          core_activity_notes_ar = excluded.core_activity_notes_ar,
+          conditions_en = excluded.conditions_en,
+          conditions_ar = excluded.conditions_ar,
+          scholarly_disagreements_en = excluded.scholarly_disagreements_en,
+          scholarly_disagreements_ar = excluded.scholarly_disagreements_ar,
+          verification_status = 'AI_OPINION',
+          confidence_level = excluded.confidence_level,
+          last_verified_at = excluded.last_verified_at`
+      ).run(
+        symbol,
+        baseAsset,
+        payload.shariah.classification,
+        authorityLabel,
+        now.slice(0, 10),
+        payload.shariah.methodology,
+        payload.shariah.coreActivityNotesEn,
+        payload.shariah.coreActivityNotesAr,
+        payload.shariah.conditionsEn ?? "Spot ownership only; preliminary AI screening — verify with qualified scholars.",
+        payload.shariah.conditionsAr ?? "التداول الفوري (Spot) فقط؛ فحص أولي بالذكاء الاصطناعي يتطلب التثبت الشرعي.",
+        payload.shariah.scholarlyDisagreementsEn ?? "AI preliminary assessment — not an official fatwa.",
+        payload.shariah.scholarlyDisagreementsAr ?? "تقييم آلي أولي مبني على نشاط البروتوكول — ليس فتوى شرعية رسمية.",
+        payload.shariah.confidenceLevel,
+        now
+      );
+
+      tx.prepare(
+        `INSERT INTO research_audit_log (symbol, entity_type, field_name, previous_value, new_value, reason, source_url, created_at)
+         VALUES (?, 'SHARIAH', 'classification', ?, ?, ?, NULL, ?)`
+      ).run(
+        symbol,
+        existingShariah?.classification ?? "UNVERIFIED",
+        payload.shariah.classification,
+        `AI Preliminary Screening (${payload.aiModelLabel})`,
+        now
+      );
+    }
+
+    const upsertFactor = tx.prepare(`
+      INSERT INTO credibility_factors (
+        symbol, factor_key, weight, score, evidence_en, evidence_ar,
+        source_name, source_url, research_date, confidence_level, is_available
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'MEDIUM', 1)
+      ON CONFLICT(symbol, factor_key) DO UPDATE SET
+        score = excluded.score,
+        evidence_en = excluded.evidence_en,
+        evidence_ar = excluded.evidence_ar,
+        source_name = excluded.source_name,
+        research_date = excluded.research_date,
+        confidence_level = 'MEDIUM',
+        is_available = 1
+    `);
+
+    for (const f of payload.credibility) {
+      upsertFactor.run(
+        symbol,
+        f.factorKey,
+        CREDIBILITY_WEIGHTS[f.factorKey],
+        Math.max(0, Math.min(100, Math.round(f.score))),
+        f.evidenceEn,
+        f.evidenceAr,
+        `AI Research (${payload.aiModelLabel})`,
+        now.slice(0, 10)
+      );
+    }
+
+    tx.prepare(
+      `INSERT INTO tokenomics_profiles (
+        symbol, inflation_rate_pct, insider_allocation_pct,
+        unlock_schedule_summary_en, unlock_schedule_summary_ar,
+        token_utility_en, token_utility_ar,
+        burn_mechanism_en, burn_mechanism_ar,
+        staking_mechanism_en, staking_mechanism_ar,
+        governance_rights_en, governance_rights_ar,
+        risk_flags_json, tokenomics_risk, source_name, source_url, last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+      ON CONFLICT(symbol) DO UPDATE SET
+        inflation_rate_pct = excluded.inflation_rate_pct,
+        insider_allocation_pct = excluded.insider_allocation_pct,
+        unlock_schedule_summary_en = excluded.unlock_schedule_summary_en,
+        unlock_schedule_summary_ar = excluded.unlock_schedule_summary_ar,
+        token_utility_en = excluded.token_utility_en,
+        token_utility_ar = excluded.token_utility_ar,
+        burn_mechanism_en = excluded.burn_mechanism_en,
+        burn_mechanism_ar = excluded.burn_mechanism_ar,
+        staking_mechanism_en = excluded.staking_mechanism_en,
+        staking_mechanism_ar = excluded.staking_mechanism_ar,
+        governance_rights_en = excluded.governance_rights_en,
+        governance_rights_ar = excluded.governance_rights_ar,
+        risk_flags_json = excluded.risk_flags_json,
+        tokenomics_risk = excluded.tokenomics_risk,
+        source_name = excluded.source_name,
+        last_updated = excluded.last_updated`
+    ).run(
+      symbol,
+      payload.tokenomics.inflationRatePct,
+      payload.tokenomics.insiderAllocationPct,
+      payload.tokenomics.unlockScheduleSummaryEn,
+      payload.tokenomics.unlockScheduleSummaryAr,
+      payload.tokenomics.tokenUtilityEn,
+      payload.tokenomics.tokenUtilityAr,
+      payload.tokenomics.burnMechanismEn,
+      payload.tokenomics.burnMechanismAr,
+      payload.tokenomics.stakingMechanismEn,
+      payload.tokenomics.stakingMechanismAr,
+      payload.tokenomics.governanceRightsEn,
+      payload.tokenomics.governanceRightsAr,
+      JSON.stringify(payload.tokenomics.riskFlags || []),
+      payload.tokenomics.tokenomicsRisk,
+      `AI Research (${payload.aiModelLabel})`,
+      now
+    );
+
+    const upsertScenario = tx.prepare(`
+      INSERT INTO investment_scenarios (
+        symbol, scenario_type, assumptions_en, assumptions_ar,
+        catalysts_en, catalysts_ar, risks_en, risks_ar,
+        time_horizon, supporting_evidence_en, supporting_evidence_ar,
+        source_url, last_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+      ON CONFLICT(symbol, scenario_type) DO UPDATE SET
+        assumptions_en = excluded.assumptions_en,
+        assumptions_ar = excluded.assumptions_ar,
+        catalysts_en = excluded.catalysts_en,
+        catalysts_ar = excluded.catalysts_ar,
+        risks_en = excluded.risks_en,
+        risks_ar = excluded.risks_ar,
+        time_horizon = excluded.time_horizon,
+        supporting_evidence_en = excluded.supporting_evidence_en,
+        supporting_evidence_ar = excluded.supporting_evidence_ar,
+        last_updated = excluded.last_updated
+    `);
+
+    for (const sc of payload.scenarios) {
+      upsertScenario.run(
+        symbol,
+        sc.scenarioType,
+        sc.assumptionsEn,
+        sc.assumptionsAr,
+        sc.catalystsEn,
+        sc.catalystsAr,
+        sc.risksEn,
+        sc.risksAr,
+        sc.timeHorizon,
+        `AI analytical scenario (${payload.aiModelLabel}); not guaranteed financial advice.`,
+        `سيناريو تحليلي مولّد بالـ AI (${payload.aiModelLabel})؛ وليس نصيحة مالية مضمونة.`,
+        now
+      );
+    }
+  });
+
+  return {
+    symbol,
+    savedShariah: shouldWriteShariah,
+    classification: shouldWriteShariah
+      ? payload.shariah.classification
+      : existingShariah?.classification || payload.shariah.classification,
+  };
 }

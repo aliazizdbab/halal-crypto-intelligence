@@ -1,10 +1,12 @@
 import type {
   ConfidenceLevel,
   CredibilityFactorKey,
+  ExchangeVenue,
   RiskLevel,
   ShariahClassification,
   VerificationStatus,
 } from "@/types/domain";
+import { EXTENDED_VERIFIED_SEED_ASSETS } from "./verified-seed-extended";
 
 export interface SeedCredibilityInput {
   factorKey: CredibilityFactorKey;
@@ -39,6 +41,7 @@ export interface SeedAssetProfile {
   officialWebsite: string;
   githubRepo: string | null;
   coingeckoId: string;
+  exchanges?: ExchangeVenue[];
   descriptionEn: string;
   descriptionAr: string;
   shariah: {
@@ -183,7 +186,7 @@ function buildScenarios(params: {
   ];
 }
 
-export const VERIFIED_SEED_ASSETS: SeedAssetProfile[] = [
+export const CORE_VERIFIED_SEED_ASSETS: SeedAssetProfile[] = [
   // 1. BTC
   {
     symbol: "BTCUSDT",
@@ -3799,4 +3802,9 @@ export const VERIFIED_SEED_ASSETS: SeedAssetProfile[] = [
       bullCatAr: "دورات حماس ومضاربة فقط.",
     }),
   },
+];
+
+export const VERIFIED_SEED_ASSETS: SeedAssetProfile[] = [
+  ...CORE_VERIFIED_SEED_ASSETS,
+  ...EXTENDED_VERIFIED_SEED_ASSETS,
 ];

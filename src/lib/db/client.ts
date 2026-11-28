@@ -12,6 +12,22 @@ function resolveDbPath(): string {
   return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
 }
 
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function runMigrations(db: DatabaseSync): void {
+  ensureColumn(db, "assets", "bybit_status", "TEXT NOT NULL DEFAULT 'NOT_LISTED'");
+  ensureColumn(db, "market_snapshots", "binance_price_usdt", "REAL");
+  ensureColumn(db, "market_snapshots", "bybit_price_usdt", "REAL");
+  ensureColumn(db, "market_snapshots", "binance_quote_volume_24h", "REAL");
+  ensureColumn(db, "market_snapshots", "bybit_quote_volume_24h", "REAL");
+  ensureColumn(db, "market_snapshots", "primary_exchange", "TEXT NOT NULL DEFAULT 'BINANCE'");
+}
+
 export function getDb(): DatabaseSync {
   const targetPath = resolveDbPath();
   if (dbInstance && initializedPath === targetPath) {
@@ -26,7 +42,15 @@ export function getDb(): DatabaseSync {
   }
 
   const db = new DatabaseSync(targetPath);
+  // Ensure existing DB tables receive new columns BEFORE index creation in schema SQL
+  const existingAssets = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='assets'")
+    .get();
+  if (existingAssets) {
+    runMigrations(db);
+  }
   db.exec(DATABASE_SCHEMA_SQL);
+  runMigrations(db);
   dbInstance = db;
   initializedPath = targetPath;
   return db;

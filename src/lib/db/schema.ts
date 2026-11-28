@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS assets (
   name TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'Unclassified',
   binance_status TEXT NOT NULL DEFAULT 'TRADING',
+  bybit_status TEXT NOT NULL DEFAULT 'NOT_LISTED',
   is_spot_allowed INTEGER NOT NULL DEFAULT 1,
   spot_verified_at TEXT NOT NULL,
   official_website TEXT,
@@ -23,17 +24,21 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assets_base ON assets(base_asset);
-CREATE INDEX IF NOT EXISTS idx_assets_spot ON assets(binance_status, is_spot_allowed, quote_asset);
+CREATE INDEX IF NOT EXISTS idx_assets_spot ON assets(binance_status, bybit_status, is_spot_allowed, quote_asset);
 
 CREATE TABLE IF NOT EXISTS market_snapshots (
   symbol TEXT PRIMARY KEY REFERENCES assets(symbol) ON DELETE CASCADE,
   base_asset TEXT NOT NULL,
   quote_asset TEXT NOT NULL DEFAULT 'USDT',
   price_usdt REAL,
+  binance_price_usdt REAL,
+  bybit_price_usdt REAL,
   price_change_24h REAL,
   price_change_pct_24h REAL,
   volume_24h REAL,
   quote_volume_24h REAL,
+  binance_quote_volume_24h REAL,
+  bybit_quote_volume_24h REAL,
   high_24h REAL,
   low_24h REAL,
   bid_price REAL,
@@ -45,6 +50,7 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
   total_supply REAL,
   max_supply REAL,
   market_cap_rank INTEGER,
+  primary_exchange TEXT NOT NULL DEFAULT 'BINANCE',
   price_source TEXT NOT NULL DEFAULT 'Binance Spot Public API',
   market_cap_source TEXT,
   fetched_at TEXT NOT NULL

@@ -3,6 +3,8 @@ node_modules/
 out/
 dist/
 android/
+*.apk
+*.keystore
 /data/
 *.sqlite
 *.sqlite-wal

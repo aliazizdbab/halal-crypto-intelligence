@@ -82,9 +82,10 @@ jobs:
           yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Sync version into mobile launcher
+      - name: Build mobile seed bundle & sync version
         run: |
           VER="${{ needs.verify.outputs.version }}"
+          npm run mobile:build
           sed -i "s/const CURRENT_VERSION = \".*\";/const CURRENT_VERSION = \"${VER}\";/" mobile/index.html
       - name: Initialize & sync Capacitor Android project
         run: |

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAssetDetail } from "@/lib/services/repository";
 import { fetchBinanceOrderBookDepth } from "@/lib/services/binance";
+import { fetchBybitOrderBookDepth } from "@/lib/services/bybit";
+import { fetchAssetOrderBookLiquidity } from "@/lib/services/liquidity";
 import { getGithubRepoMetrics } from "@/lib/services/market-enrichment";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +18,15 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Asset not found" }, { status: 404 });
     }
 
-    const [orderBook, github] = await Promise.all([
-      fetchBinanceOrderBookDepth(detail.overview.symbol, 50).catch(() => null),
+    const preferBybit =
+      detail.overview.binanceStatus !== "TRADING" && detail.overview.bybitStatus === "TRADING";
+
+    const [orderBook, liquidity, github] = await Promise.all([
+      (preferBybit
+        ? fetchBybitOrderBookDepth(detail.overview.symbol, 100)
+        : fetchBinanceOrderBookDepth(detail.overview.symbol, 50)
+      ).catch(() => null),
+      fetchAssetOrderBookLiquidity(detail.overview.symbol, "COMBINED").catch(() => null),
       getGithubRepoMetrics(detail.overview.githubRepo).catch(() => null),
     ]);
 
@@ -25,6 +34,7 @@ export async function GET(
       ok: true,
       detail,
       orderBook,
+      liquidity,
       github,
     });
   } catch (err) {

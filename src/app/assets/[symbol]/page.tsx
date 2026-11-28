@@ -13,7 +13,9 @@ import {
   GitBranch,
   History,
   Layers,
+  Loader2,
   ShieldCheck,
+  Sparkles,
   Star,
   TrendingDown,
   TrendingUp,
@@ -21,7 +23,7 @@ import {
 import type { AssetFullDetail } from "@/lib/services/repository";
 import type { OrderBookDepthSummary, SupportedTimeframe } from "@/lib/services/binance";
 import type { GithubRepoMetrics } from "@/lib/services/market-enrichment";
-import type { TechnicalIndicatorSummary } from "@/types/domain";
+import type { OrderBookLiquidityAnalysis, TechnicalIndicatorSummary } from "@/types/domain";
 import {
   FACTOR_LABELS,
   formatCompactNumber,
@@ -35,7 +37,9 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import { TopNav } from "@/components/TopNav";
 import { CandlestickChart } from "@/components/CandlestickChart";
+import { OrderBookLiquidityPanel } from "@/components/OrderBookLiquidityPanel";
 import { AiResearchDrawer } from "@/components/AiResearchDrawer";
+import { AiAgentSettingsModal } from "@/components/AiAgentSettingsModal";
 import { ShariahRegistryModal } from "@/components/ShariahRegistryModal";
 
 const TIMEFRAMES: SupportedTimeframe[] = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"];
@@ -47,12 +51,16 @@ export default function AssetResearchPage() {
 
   const [detail, setDetail] = useState<AssetFullDetail | null>(null);
   const [orderBook, setOrderBook] = useState<OrderBookDepthSummary | null>(null);
+  const [liquidity, setLiquidity] = useState<OrderBookLiquidityAnalysis | null>(null);
   const [github, setGithub] = useState<GithubRepoMetrics | null>(null);
   const [technicals, setTechnicals] = useState<TechnicalIndicatorSummary | null>(null);
   const [timeframe, setTimeframe] = useState<SupportedTimeframe>("4h");
+  const [candleVenue, setCandleVenue] = useState<"AUTO" | "BINANCE" | "BYBIT">("AUTO");
   const [loading, setLoading] = useState(true);
   const [techLoading, setTechLoading] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [showAi, setShowAi] = useState(false);
+  const [showAiSettings, setShowAiSettings] = useState(false);
   const [showShariahEdit, setShowShariahEdit] = useState(false);
 
   const loadAsset = useCallback(async () => {
@@ -63,6 +71,7 @@ export default function AssetResearchPage() {
       if (data.ok) {
         setDetail(data.detail);
         setOrderBook(data.orderBook || null);
+        setLiquidity(data.liquidity || null);
         setGithub(data.github || null);
       }
     } finally {
@@ -71,11 +80,11 @@ export default function AssetResearchPage() {
   }, [rawSymbol]);
 
   const loadTechnicals = useCallback(
-    async (tf: SupportedTimeframe) => {
+    async (tf: SupportedTimeframe, venue: "AUTO" | "BINANCE" | "BYBIT") => {
       setTechLoading(true);
       try {
         const res = await fetch(
-          `/api/assets/${encodeURIComponent(rawSymbol)}/technicals?timeframe=${encodeURIComponent(tf)}&limit=250`
+          `/api/assets/${encodeURIComponent(rawSymbol)}/technicals?timeframe=${encodeURIComponent(tf)}&venue=${encodeURIComponent(venue)}&limit=250`
         );
         const data = await res.json();
         if (data.ok) {
@@ -93,8 +102,32 @@ export default function AssetResearchPage() {
   }, [loadAsset]);
 
   useEffect(() => {
-    loadTechnicals(timeframe);
-  }, [loadTechnicals, timeframe]);
+    loadTechnicals(timeframe, candleVenue);
+  }, [loadTechnicals, timeframe, candleVenue]);
+
+  async function handleRunAiAnalysis(allowHeuristic = false) {
+    setAiAnalyzing(true);
+    try {
+      const res = await fetch("/api/ai/analyze-asset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: rawSymbol,
+          lang,
+          allowHeuristicFallback: allowHeuristic,
+          overwriteVerified: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && data.detail) {
+        setDetail(data.detail);
+      } else if (data.code === "AI_NOT_CONFIGURED") {
+        setShowAiSettings(true);
+      }
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }
 
   async function handleToggleWatchlist() {
     if (!detail) return;
@@ -177,6 +210,14 @@ export default function AssetResearchPage() {
               {lang === "ar" ? "المفضلة" : "Watchlist"}
             </button>
             <button
+              onClick={() => handleRunAiAnalysis(false)}
+              disabled={aiAnalyzing}
+              className="inline-flex items-center gap-1 rounded-lg border border-purple-500/45 bg-purple-500/20 px-3 py-1.5 font-semibold text-purple-100 hover:bg-purple-500/30 disabled:opacity-50"
+            >
+              {aiAnalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {lang === "ar" ? "تحليل شامل وحفظ بالـ AI" : "AI Analyze & Save"}
+            </button>
+            <button
               onClick={() => setShowAi(true)}
               className="inline-flex items-center gap-1 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-3 py-1.5 font-semibold text-indigo-200 hover:bg-indigo-500/25"
             >
@@ -190,15 +231,28 @@ export default function AssetResearchPage() {
               <Download className="h-3.5 w-3.5 text-emerald-400" />
               {lang === "ar" ? "تقرير PDF للعملة" : "Export Asset PDF"}
             </a>
-            <a
-              href={overview.binanceSpotUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 font-semibold text-amber-200 hover:bg-amber-500/25"
-            >
-              Binance Spot ({overview.symbol})
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
+            {(!overview.exchanges || overview.exchanges.includes("BINANCE")) && (
+              <a
+                href={overview.binanceSpotUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 font-semibold text-amber-200 hover:bg-amber-500/25"
+              >
+                Binance Spot
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
+            {overview.exchanges?.includes("BYBIT") && overview.bybitSpotUrl && (
+              <a
+                href={overview.bybitSpotUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-orange-500/40 bg-orange-500/15 px-3 py-1.5 font-semibold text-orange-200 hover:bg-orange-500/25"
+              >
+                Bybit Spot
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
           </div>
         </div>
 
@@ -429,21 +483,39 @@ export default function AssetResearchPage() {
               </p>
             </div>
 
-            {/* 9 Supported Timeframes */}
-            <div className="flex flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
-              {TIMEFRAMES.map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setTimeframe(tf)}
-                  className={`rounded px-2 py-1 font-mono-num text-[11px] font-semibold transition ${
-                    timeframe === tf
-                      ? "bg-emerald-500/25 text-emerald-300"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
+            {/* Venue + 9 Supported Timeframes */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1 text-[11px]">
+                {(["AUTO", "BINANCE", "BYBIT"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setCandleVenue(v)}
+                    className={`rounded px-2 py-1 font-semibold transition ${
+                      candleVenue === v
+                        ? "bg-amber-500/25 text-amber-200"
+                        : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    {v === "AUTO" ? (lang === "ar" ? "تلقائي" : "Auto") : v}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={`rounded px-2 py-1 font-mono-num text-[11px] font-semibold transition ${
+                      timeframe === tf
+                        ? "bg-emerald-500/25 text-emerald-300"
+                        : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -587,6 +659,13 @@ export default function AssetResearchPage() {
             </div>
           ) : null}
         </section>
+
+        {/* SECTION G2: Spot Order Book Buy & Sell Liquidity Centers */}
+        <OrderBookLiquidityPanel
+          symbol={overview.symbol}
+          initialLiquidity={liquidity}
+          exchanges={overview.exchanges}
+        />
 
         {/* SECTION C & D: Project Credibility (7 Weighted Factors) + Investment Potential Breakdown */}
         <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
@@ -900,7 +979,13 @@ export default function AssetResearchPage() {
         </section>
       </main>
 
-      <AiResearchDrawer open={showAi} onClose={() => setShowAi(false)} defaultSymbol={overview.symbol} />
+      <AiResearchDrawer
+        open={showAi}
+        onClose={() => setShowAi(false)}
+        defaultSymbol={overview.symbol}
+        onOpenSettings={() => setShowAiSettings(true)}
+      />
+      <AiAgentSettingsModal open={showAiSettings} onClose={() => setShowAiSettings(false)} />
       <ShariahRegistryModal
         open={showShariahEdit}
         onClose={() => setShowShariahEdit(false)}

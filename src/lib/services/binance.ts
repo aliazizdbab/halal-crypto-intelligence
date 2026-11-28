@@ -188,16 +188,31 @@ export async function syncBinanceSpotMarketData(): Promise<BinanceSyncResult> {
     const delistedOrSuspended: string[] = [];
 
     const existingRows = db
-      .prepare("SELECT symbol, binance_status, is_curated FROM assets WHERE quote_asset = 'USDT'")
-      .all() as Array<{ symbol: string; binance_status: string; is_curated: number }>;
+      .prepare("SELECT symbol, binance_status, bybit_status, is_curated FROM assets WHERE quote_asset = 'USDT'")
+      .all() as Array<{ symbol: string; binance_status: string; bybit_status: string; is_curated: number }>;
     const existingSet = new Set(existingRows.map((r) => r.symbol));
+
+    const existingSnapMap = new Map<
+      string,
+      { bybit_price_usdt: number | null; bybit_quote_volume_24h: number | null }
+    >();
+    const snapRows = db
+      .prepare("SELECT symbol, bybit_price_usdt, bybit_quote_volume_24h FROM market_snapshots")
+      .all() as Array<{
+      symbol: string;
+      bybit_price_usdt: number | null;
+      bybit_quote_volume_24h: number | null;
+    }>;
+    for (const sr of snapRows) {
+      existingSnapMap.set(sr.symbol, sr);
+    }
 
     runInTransaction((tx) => {
       const insertAsset = tx.prepare(`
         INSERT INTO assets (
-          symbol, base_asset, quote_asset, name, category, binance_status, is_spot_allowed,
+          symbol, base_asset, quote_asset, name, category, binance_status, bybit_status, is_spot_allowed,
           spot_verified_at, is_curated, created_at, updated_at
-        ) VALUES (?, ?, 'USDT', ?, 'Binance Spot Asset', 'TRADING', 1, ?, 0, ?, ?)
+        ) VALUES (?, ?, 'USDT', ?, 'Spot Crypto Asset', 'TRADING', 'NOT_LISTED', 1, ?, 0, ?, ?)
         ON CONFLICT(symbol) DO UPDATE SET
           binance_status = 'TRADING',
           is_spot_allowed = 1,
@@ -222,23 +237,37 @@ export async function syncBinanceSpotMarketData(): Promise<BinanceSyncResult> {
 
       const upsertMarket = tx.prepare(`
         INSERT INTO market_snapshots (
-          symbol, base_asset, quote_asset, price_usdt, price_change_24h, price_change_pct_24h,
-          volume_24h, quote_volume_24h, high_24h, low_24h, bid_price, ask_price, spread_pct,
-          price_source, fetched_at
-        ) VALUES (?, ?, 'USDT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          symbol, base_asset, quote_asset, price_usdt, binance_price_usdt,
+          price_change_24h, price_change_pct_24h,
+          volume_24h, quote_volume_24h, binance_quote_volume_24h,
+          high_24h, low_24h, bid_price, ask_price, spread_pct,
+          primary_exchange, price_source, fetched_at
+        ) VALUES (?, ?, 'USDT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(symbol) DO UPDATE SET
           price_usdt = excluded.price_usdt,
+          binance_price_usdt = excluded.binance_price_usdt,
           price_change_24h = excluded.price_change_24h,
           price_change_pct_24h = excluded.price_change_pct_24h,
           volume_24h = excluded.volume_24h,
           quote_volume_24h = excluded.quote_volume_24h,
+          binance_quote_volume_24h = excluded.binance_quote_volume_24h,
           high_24h = excluded.high_24h,
           low_24h = excluded.low_24h,
           bid_price = excluded.bid_price,
           ask_price = excluded.ask_price,
           spread_pct = excluded.spread_pct,
+          primary_exchange = excluded.primary_exchange,
           price_source = excluded.price_source,
           fetched_at = excluded.fetched_at
+      `);
+
+      const updateBinanceOnlyPrices = tx.prepare(`
+        UPDATE market_snapshots
+        SET binance_price_usdt = ?,
+            binance_quote_volume_24h = ?,
+            quote_volume_24h = ?,
+            fetched_at = ?
+        WHERE symbol = ?
       `);
 
       const priceSourceLabel = exchangeResp.isFallback
@@ -267,35 +296,55 @@ export async function syncBinanceSpotMarketData(): Promise<BinanceSyncResult> {
             bidPrice > 0 && askPrice > 0 ? ((askPrice - bidPrice) / ((askPrice + bidPrice) / 2)) * 100 : null;
 
           if (Number.isFinite(lastPrice) && lastPrice > 0) {
-            upsertMarket.run(
-              symbol,
-              symInfo.baseAsset,
-              lastPrice,
-              Number.isFinite(priceChange) ? priceChange : null,
-              Number.isFinite(priceChangePct) ? priceChangePct : null,
-              Number.isFinite(volume) ? volume : null,
-              Number.isFinite(quoteVolume) ? quoteVolume : null,
-              Number.isFinite(highPrice) ? highPrice : null,
-              Number.isFinite(lowPrice) ? lowPrice : null,
-              Number.isFinite(bidPrice) && bidPrice > 0 ? bidPrice : null,
-              Number.isFinite(askPrice) && askPrice > 0 ? askPrice : null,
-              spreadPct !== null && Number.isFinite(spreadPct) ? Number(spreadPct.toFixed(4)) : null,
-              priceSourceLabel,
-              now
-            );
+            const binVol = Number.isFinite(quoteVolume) ? quoteVolume : 0;
+            const prevSnap = existingSnapMap.get(symbol);
+            const bybitVol = prevSnap?.bybit_quote_volume_24h ?? 0;
+            const totalQuoteVol = binVol + bybitVol;
+
+            // If Bybit already has higher 24h liquidity and a valid price, keep Bybit as primary display price while updating Binance figures
+            if (prevSnap?.bybit_price_usdt && bybitVol > binVol) {
+              updateBinanceOnlyPrices.run(lastPrice, binVol, totalQuoteVol, now, symbol);
+            } else {
+              upsertMarket.run(
+                symbol,
+                symInfo.baseAsset,
+                lastPrice,
+                lastPrice,
+                Number.isFinite(priceChange) ? priceChange : null,
+                Number.isFinite(priceChangePct) ? priceChangePct : null,
+                Number.isFinite(volume) ? volume : null,
+                totalQuoteVol > 0 ? totalQuoteVol : binVol,
+                binVol,
+                Number.isFinite(highPrice) ? highPrice : null,
+                Number.isFinite(lowPrice) ? lowPrice : null,
+                Number.isFinite(bidPrice) && bidPrice > 0 ? bidPrice : null,
+                Number.isFinite(askPrice) && askPrice > 0 ? askPrice : null,
+                spreadPct !== null && Number.isFinite(spreadPct) ? Number(spreadPct.toFixed(4)) : null,
+                "BINANCE",
+                priceSourceLabel,
+                now
+              );
+            }
             updatedSnapshots++;
           }
         }
       }
 
-      // Mark any previously TRADING symbol not in eligibleMap as INACTIVE/DELISTED
+      // Mark any previously Binance TRADING symbol not in eligibleMap as INACTIVE/NOT_LISTED on Binance,
+      // while keeping is_spot_allowed = 1 if still active on Bybit Spot.
       const markInactive = tx.prepare(
-        `UPDATE assets SET binance_status = 'INACTIVE', is_spot_allowed = 0, updated_at = ? WHERE symbol = ?`
+        `UPDATE assets
+         SET binance_status = 'INACTIVE',
+             is_spot_allowed = CASE WHEN bybit_status = 'TRADING' THEN 1 ELSE 0 END,
+             updated_at = ?
+         WHERE symbol = ?`
       );
       for (const row of existingRows) {
         if (!eligibleMap.has(row.symbol) && row.binance_status === "TRADING") {
           markInactive.run(now, row.symbol);
-          delistedOrSuspended.push(row.symbol);
+          if (row.bybit_status !== "TRADING") {
+            delistedOrSuspended.push(row.symbol);
+          }
         }
       }
 

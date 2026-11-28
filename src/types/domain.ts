@@ -5,11 +5,42 @@ export type ShariahClassification =
   | "NON_COMPLIANT"
   | "UNVERIFIED";
 
-export type VerificationStatus = "VERIFIED" | "THIRD_PARTY_ASSESSMENT" | "ANALYST_ESTIMATE" | "AI_OPINION" | "UNVERIFIED";
+export type VerificationStatus =
+  | "VERIFIED"
+  | "THIRD_PARTY_ASSESSMENT"
+  | "ANALYST_ESTIMATE"
+  | "AI_OPINION"
+  | "UNVERIFIED";
 
 export type ConfidenceLevel = "HIGH" | "MEDIUM" | "LOW" | "UNAVAILABLE";
 
 export type RiskLevel = "LOW" | "MODERATE" | "HIGH" | "VERY_HIGH" | "UNAVAILABLE";
+
+export type ExchangeVenue = "BINANCE" | "BYBIT";
+
+export type ExchangeFilter = "ALL" | "BINANCE" | "BYBIT" | "BYBIT_EXCLUSIVE" | "BINANCE_EXCLUSIVE";
+
+export type AiProviderType =
+  | "gemini"
+  | "openai"
+  | "deepseek"
+  | "openrouter"
+  | "anthropic"
+  | "ollama"
+  | "lmstudio"
+  | "custom_webhook"
+  | "builtin_heuristic";
+
+export interface AiAgentSettings {
+  provider: AiProviderType;
+  apiKey: string;
+  hasApiKey?: boolean;
+  baseUrl: string;
+  model: string;
+  webhookUrl: string;
+  customHeadersJson: string;
+  autoAnalyzeOnSync: boolean;
+}
 
 export type CredibilityFactorKey =
   | "team_credibility"
@@ -153,17 +184,25 @@ export interface AssetDirectoryRow {
   name: string;
   category: string;
   binanceStatus: string;
+  bybitStatus?: string;
+  exchanges?: ExchangeVenue[];
+  primaryExchange?: ExchangeVenue;
   isSpotAllowed: boolean;
   spotVerifiedAt: string;
   officialWebsite: string | null;
   githubRepo: string | null;
   binanceSpotUrl: string;
+  bybitSpotUrl?: string;
   // Market
   priceUsdt: number | null;
+  binancePriceUsdt?: number | null;
+  bybitPriceUsdt?: number | null;
   priceChange24h: number | null;
   priceChangePct24h: number | null;
   volume24h: number | null;
   quoteVolume24h: number | null;
+  binanceQuoteVolume24h?: number | null;
+  bybitQuoteVolume24h?: number | null;
   high24h: number | null;
   low24h: number | null;
   bidPrice: number | null;
@@ -178,6 +217,7 @@ export interface AssetDirectoryRow {
   marketCapSource: string | null;
   // Shariah
   shariahClassification: ShariahClassification;
+  shariahVerificationStatus?: VerificationStatus;
   shariahAuthority: string;
   shariahSourceUrl: string | null;
   shariahAssessmentDate: string | null;
@@ -205,21 +245,108 @@ export interface AssetDirectoryRow {
 
 export interface DashboardSummary {
   totalBinanceSpotUsdtPairs: number;
+  totalBybitSpotUsdtPairs?: number;
+  totalUnifiedSpotPairs?: number;
   totalScreenedAssets: number;
   countHalal: number;
   countHalalWithConditions: number;
   countScholarlyDisagreement: number;
   countNonCompliant: number;
   countUnverified: number;
+  countAiScreened?: number;
   totalScreenedMarketCap: number;
   averageCredibilityScore: number | null;
   averageInvestmentPotentialScore: number | null;
-  newlyAddedAssets: Array<{ symbol: string; name: string; baseAsset: string; createdAt: string; shariahClassification: ShariahClassification }>;
-  recentlyChangedShariah: Array<{ symbol: string; previousValue: string | null; newValue: string; changedAt: string; authority: string }>;
-  upcomingMajorUnlocks: Array<{ symbol: string; name: string; unlockDate: string; unlockPct: number | null; summaryEn: string; summaryAr: string }>;
+  newlyAddedAssets: Array<{
+    symbol: string;
+    name: string;
+    baseAsset: string;
+    createdAt: string;
+    shariahClassification: ShariahClassification;
+  }>;
+  recentlyChangedShariah: Array<{
+    symbol: string;
+    previousValue: string | null;
+    newValue: string;
+    changedAt: string;
+    authority: string;
+  }>;
+  upcomingMajorUnlocks: Array<{
+    symbol: string;
+    name: string;
+    unlockDate: string;
+    unlockPct: number | null;
+    summaryEn: string;
+    summaryAr: string;
+  }>;
   lastBinanceSyncAt: string | null;
+  lastBybitSyncAt?: string | null;
   lastMarketCapSyncAt: string | null;
   binanceConnectionStatus: "CONNECTED" | "FALLBACK" | "DEGRADED" | "NOT_SYNCED";
+  bybitConnectionStatus?: "CONNECTED" | "FALLBACK" | "DEGRADED" | "NOT_SYNCED";
+}
+
+export interface LiquidityWall {
+  side: "BUY" | "SELL";
+  price: number;
+  priceBandLow: number;
+  priceBandHigh: number;
+  baseQty: number;
+  notionalUsd: number;
+  pctFromMid: number;
+  shareOfBookPct: number;
+  strength: "MAJOR" | "STRONG" | "MODERATE";
+  venues: ExchangeVenue[];
+}
+
+export interface DepthCurvePoint {
+  price: number;
+  pctFromMid: number;
+  cumulativeBidUsd: number;
+  cumulativeAskUsd: number;
+}
+
+export interface OrderBookLiquidityAnalysis {
+  symbol: string;
+  venueMode: "COMBINED" | "BINANCE" | "BYBIT";
+  venuesIncluded: ExchangeVenue[];
+  fetchedAt: string;
+  midPrice: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+  spreadPct: number | null;
+  bidDepth1PctUsd: number;
+  askDepth1PctUsd: number;
+  bidDepth2PctUsd: number;
+  askDepth2PctUsd: number;
+  bidDepth5PctUsd: number;
+  askDepth5PctUsd: number;
+  totalTrackedBidUsd: number;
+  totalTrackedAskUsd: number;
+  imbalanceRatio2Pct: number;
+  buyPressurePct2Pct: number;
+  imbalanceRatio5Pct: number;
+  buyPressurePct5Pct: number;
+  pressureBias: "STRONG_BUY" | "BUY_BIAS" | "BALANCED" | "SELL_BIAS" | "STRONG_SELL";
+  summaryAr: string;
+  summaryEn: string;
+  buyWalls: LiquidityWall[];
+  sellWalls: LiquidityWall[];
+  depthCurve: DepthCurvePoint[];
+  venueBreakdown: {
+    binance?: {
+      midPrice: number | null;
+      bidDepth2PctUsd: number;
+      askDepth2PctUsd: number;
+      spreadPct: number | null;
+    };
+    bybit?: {
+      midPrice: number | null;
+      bidDepth2PctUsd: number;
+      askDepth2PctUsd: number;
+      spreadPct: number | null;
+    };
+  };
 }
 
 export interface TechnicalIndicatorSummary {
@@ -293,7 +420,13 @@ export interface AlertRecord {
 export interface AlertRuleRecord {
   id: number;
   symbol: string | null;
-  ruleType: "PRICE_CHANGE_PCT" | "PRICE_ABOVE" | "PRICE_BELOW" | "VOLUME_SPIKE_USD" | "SHARIAH_CHANGE" | "SPOT_DELISTING";
+  ruleType:
+    | "PRICE_CHANGE_PCT"
+    | "PRICE_ABOVE"
+    | "PRICE_BELOW"
+    | "VOLUME_SPIKE_USD"
+    | "SHARIAH_CHANGE"
+    | "SPOT_DELISTING";
   threshold: number | null;
   enabled: boolean;
   notifyTelegram: boolean;

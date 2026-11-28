@@ -24,6 +24,10 @@ import {
 import { runAiResearchQuery } from "@/lib/services/ai-assistant";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/lib/services/export";
 import { compareSemver } from "@/lib/services/updates";
+import { isEligibleBybitSpotUsdt } from "@/lib/services/bybit";
+import { computeOrderBookLiquidityAnalysis } from "@/lib/services/liquidity";
+import { analyzeAndSaveAssetWithAi, getAiAgentSettings, saveAiAgentSettings } from "@/lib/services/ai-assistant";
+import { VERIFIED_SEED_ASSETS } from "@/lib/data/verified-seed";
 import type { CredibilityFactorRecord } from "@/types/domain";
 
 describe("Binance Spot Eligibility Verification", () => {
@@ -265,5 +269,138 @@ describe("SQLite Registry, Sorting, Audit Trail, AI & Reports", () => {
     expect(compareSemver("v1.2.0", "1.1.9")).toBe(1);
     expect(compareSemver("1.0.0", "v1.0.0")).toBe(0);
     expect(compareSemver("1.0.0", "1.1.0")).toBe(-1);
+  });
+
+  it("validates Bybit Spot USDT pairs and rejects leveraged ETP tokens", () => {
+    expect(
+      isEligibleBybitSpotUsdt({
+        symbol: "KASUSDT",
+        baseCoin: "KAS",
+        quoteCoin: "USDT",
+        status: "Trading",
+      })
+    ).toBe(true);
+
+    expect(
+      isEligibleBybitSpotUsdt({
+        symbol: "BTC3LUSDT",
+        baseCoin: "BTC3L",
+        quoteCoin: "USDT",
+        status: "Trading",
+      })
+    ).toBe(false);
+
+    expect(
+      isEligibleBybitSpotUsdt({
+        symbol: "ETH2SUSDT",
+        baseCoin: "ETH2S",
+        quoteCoin: "USDT",
+        status: "Trading",
+      })
+    ).toBe(false);
+
+    expect(
+      isEligibleBybitSpotUsdt({
+        symbol: "SOLUSDC",
+        baseCoin: "SOL",
+        quoteCoin: "USDC",
+        status: "Trading",
+      })
+    ).toBe(false);
+  });
+
+  it("clusters Order Book Buy & Sell Liquidity Walls and computes combined imbalance", () => {
+    const analysis = computeOrderBookLiquidityAnalysis({
+      symbol: "BTCUSDT",
+      venueMode: "COMBINED",
+      books: [
+        {
+          venue: "BINANCE",
+          bids: [
+            { price: 99950, qty: 2.0 },
+            { price: 99500, qty: 18.0 }, // Major Buy Wall ($1.79M)
+            { price: 99000, qty: 3.0 },
+          ],
+          asks: [
+            { price: 100050, qty: 1.5 },
+            { price: 100800, qty: 8.0 }, // Sell Wall ($806K)
+            { price: 101200, qty: 2.0 },
+          ],
+        },
+        {
+          venue: "BYBIT",
+          bids: [
+            { price: 99940, qty: 1.5 },
+            { price: 99510, qty: 10.0 }, // Reinforces 99.5k Buy Wall ($995K)
+          ],
+          asks: [
+            { price: 100060, qty: 1.0 },
+            { price: 100810, qty: 4.0 },
+          ],
+        },
+      ],
+    });
+
+    expect(analysis.venuesIncluded).toEqual(["BINANCE", "BYBIT"]);
+    expect(analysis.buyPressurePct2Pct).toBeGreaterThan(60);
+    expect(analysis.pressureBias === "STRONG_BUY" || analysis.pressureBias === "BUY_BIAS").toBe(true);
+    expect(analysis.buyWalls.length).toBeGreaterThan(0);
+    expect(analysis.sellWalls.length).toBeGreaterThan(0);
+    expect(analysis.buyWalls[0].notionalUsd).toBeGreaterThan(2_500_000);
+    expect(analysis.buyWalls[0].venues).toContain("BINANCE");
+    expect(analysis.buyWalls[0].venues).toContain("BYBIT");
+    expect(analysis.depthCurve.length).toBeGreaterThan(30);
+  });
+
+  it("loads 90+ curated Binance & Bybit Spot assets and filters Bybit exclusives", () => {
+    expect(VERIFIED_SEED_ASSETS.length).toBeGreaterThanOrEqual(90);
+
+    const bybitOnly = getDirectoryAssets({
+      classifications: "ALL",
+      exchange: "BYBIT_EXCLUSIVE",
+      pageSize: 50,
+    });
+    expect(bybitOnly.rows.some((r) => r.symbol === "KASUSDT")).toBe(true);
+    expect(bybitOnly.rows.some((r) => r.symbol === "MNTUSDT")).toBe(true);
+    expect(bybitOnly.rows.some((r) => r.symbol === "BTCUSDT")).toBe(false);
+
+    // Ensure Riba/Meme exclusions are enforced in default Halal view
+    const halalDir = getDirectoryAssets({ pageSize: 200 });
+    expect(halalDir.rows.some((r) => r.symbol === "ONDOUSDT")).toBe(false);
+    expect(halalDir.rows.some((r) => r.symbol === "PEPEUSDT")).toBe(false);
+    expect(halalDir.rows.some((r) => r.symbol === "KASUSDT")).toBe(true);
+  });
+
+  it("persists AI Agent settings and analyzes unverified coins with AI_OPINION badge", async () => {
+    // Insert a brand-new unverified coin discovered on Bybit Spot
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO assets (symbol, base_asset, quote_asset, name, category, binance_status, bybit_status, is_spot_allowed, spot_verified_at, is_curated, created_at, updated_at)
+       VALUES ('NEWL2USDT', 'NEWL2', 'USDT', 'NewRollup', 'Layer 2 Infrastructure', 'NOT_LISTED', 'TRADING', 1, ?, 0, ?, ?)`
+    ).run(now, now, now);
+    db.prepare(
+      `INSERT INTO market_snapshots (symbol, base_asset, quote_asset, price_usdt, quote_volume_24h, market_cap, fdv, primary_exchange, price_source, fetched_at)
+       VALUES ('NEWL2USDT', 'NEWL2', 'USDT', 0.45, 25000000, 300000000, 450000000, 'BYBIT', 'Bybit Test', ?)`
+    ).run(now);
+
+    saveAiAgentSettings({
+      provider: "builtin_heuristic",
+      apiKey: "sk-test-secret-9876",
+      model: "hci-evidence-v1.1",
+    });
+    const masked = getAiAgentSettings(false);
+    expect(masked.provider).toBe("builtin_heuristic");
+    expect(masked.apiKey).toBe("••••••••9876");
+
+    const aiRes = await analyzeAndSaveAssetWithAi({
+      symbol: "NEWL2USDT",
+      lang: "ar",
+    });
+    expect(aiRes.ok).toBe(true);
+    expect(aiRes.detail?.shariah.verificationStatus).toBe("AI_OPINION");
+    expect(aiRes.detail?.overview.shariahVerificationStatus).toBe("AI_OPINION");
+    expect(aiRes.detail?.credibility.score).not.toBeNull();
+    expect(aiRes.detail?.scenarios.length).toBe(3);
   });
 });
